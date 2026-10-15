@@ -10,6 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
+from http.client import IncompleteRead
 from pathlib import Path
 
 try:
@@ -18,7 +19,7 @@ try:
 except Exception:
     PACIFIC = None
 
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 USER_AGENT = f"StopICE-Telegram-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -79,7 +80,12 @@ def http(url, data=None, timeout=30):
     body = urllib.parse.urlencode(data).encode() if data else None
     req = urllib.request.Request(url, data=body, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read().decode("utf-8", errors="replace")
+        try:
+            raw = resp.read()
+        except IncompleteRead as e:
+            # stopice иногда обрывает ответ, хотя JSON уже пришёл целиком
+            raw = e.partial
+        return raw.decode("utf-8", errors="replace")
 
 
 def location_key(loc):
@@ -107,7 +113,19 @@ def clean_text(text):
 
 # --- stopice.net -------------------------------------------------------------
 
-def fetch_stopice(cfg, loc):
+def fetch_stopice(cfg, loc, attempts=2):
+    """Запрос к stopice; при обрыве, таймауте или rate limit — одна повторная попытка."""
+    for attempt in range(attempts):
+        try:
+            return fetch_stopice_once(cfg, loc)
+        except Exception as e:
+            if attempt + 1 >= attempts:
+                raise
+            log(f"{loc.get('name') or 'Точка'}: stopice: {e}, повтор через {REQUEST_GAP} с")
+            time.sleep(REQUEST_GAP)
+
+
+def fetch_stopice_once(cfg, loc):
     query = urllib.parse.urlencode({
         "key": cfg["stopice_api_key"],
         "recentalerts": 1,
