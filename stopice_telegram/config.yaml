@@ -1,5 +1,5 @@
 name: StopICE Telegram
-version: "1.2.1"
+version: "1.2.2"
 slug: stopice_telegram
 description: Новые репорты stopice.net и antifreeze.app (в т.ч. iceout.org) рядом с вами — в Telegram
 url: https://github.com/0xc000x/ha-reports-tg-addon

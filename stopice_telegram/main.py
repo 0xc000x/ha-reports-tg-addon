@@ -18,7 +18,7 @@ try:
 except Exception:
     PACIFIC = None
 
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 USER_AGENT = f"StopICE-Telegram-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -359,8 +359,12 @@ def main():
             started = True
             log("Опрос работает — " + "; ".join(counts))
             if cfg.get("notify_on_start"):
-                send_text(cfg, f"✅ StopICE-бот v{VERSION} запущен. Точек: {len(locations)}\n"
-                          + html.escape("\n".join(counts)))
+                try:
+                    send_text(cfg, f"✅ StopICE-бот v{VERSION} запущен. Точек: {len(locations)}\n"
+                              + html.escape("\n".join(counts)))
+                    log("Сообщение о запуске отправлено в Telegram")
+                except Exception as e:
+                    log(f"Не удалось отправить сообщение о запуске: {e}")
         time.sleep(max(5, interval - (time.monotonic() - cycle_start)))
 
 
