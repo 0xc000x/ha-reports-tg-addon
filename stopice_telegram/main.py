@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import OrderedDict
 from datetime import datetime
 from http.client import IncompleteRead
 from pathlib import Path
@@ -19,7 +20,7 @@ try:
 except Exception:
     PACIFIC = None
 
-VERSION = "1.2.3"
+VERSION = "1.3.0"
 USER_AGENT = f"StopICE-Telegram-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -27,6 +28,9 @@ STATE_FILE = (Path("/data") if OPTIONS_FILE.exists() else HERE) / "seen.json"
 MAX_SEEN = 5000
 REQUEST_GAP = 5  # пауза между запросами к stopice, иначе срабатывает rate limit
 ANTIFREEZE_URL = "https://antifreeze.app/api/sightings"
+WEB_PORT = 8099  # Ingress: карта точек в интерфейсе Home Assistant
+CHANGELOG_FILE = HERE / "CHANGELOG.md"
+MAX_RECENT = 300  # сколько последних репортов показывать на карте
 
 PRIORITIES = {
     "1": "🔴 ПОДТВЕРЖДЕНО",
@@ -310,7 +314,15 @@ def process(cfg, state, loc, alerts, known_key):
         log(f"{name}: отправлен репорт {alert['uid']}: {alert.get('address')}")
 
 
-def poll_once(cfg, state, locations):
+def remember(recent, alerts):
+    for a in alerts:
+        recent[a["uid"]] = {k: a.get(k) for k in ("uid", "source", "status", "address", "created", "lat", "long")}
+        recent.move_to_end(a["uid"])
+    while len(recent) > MAX_RECENT:
+        recent.popitem(last=False)
+
+
+def poll_once(cfg, state, locations, recent):
     counts = []
     for n, loc in enumerate(locations):
         if n:
@@ -319,6 +331,7 @@ def poll_once(cfg, state, locations):
         try:
             alerts = fetch_stopice(cfg, loc)
             counts.append(f"{name}: {len(alerts)}")
+            remember(recent, reversed(alerts))
             process(cfg, state, loc, alerts, "locations")
         except Exception as e:
             counts.append(f"{name}: ошибка")
@@ -332,12 +345,67 @@ def poll_once(cfg, state, locations):
                 near = [s for s in sightings
                         if (d := distance_to(loc, s)) is not None and d <= float(loc["distance_miles"])]
                 matched += len(near)
+                remember(recent, reversed(near))
                 process(cfg, state, loc, near, "af_locations")
             counts.append(f"antifreeze: {matched} в зонах из {len(sightings)}")
         except Exception as e:
             counts.append("antifreeze: ошибка")
             log(f"antifreeze: ошибка: {e}")
     return counts
+
+
+def changelog_sections():
+    """[(версия, [пункты]), ...] из CHANGELOG.md, свежие первыми."""
+    try:
+        text = CHANGELOG_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    sections = []
+    for line in text.splitlines():
+        if line.startswith("## "):
+            sections.append((line[3:].strip(), []))
+        elif sections and line.strip().startswith("- "):
+            sections[-1][1].append(line.strip()[2:])
+    return sections
+
+
+def version_tuple(v):
+    return tuple(int(x) for x in re.findall(r"\d+", str(v))[:3])
+
+
+def release_notes(last_version):
+    """Текст о новой версии: все пункты changelog новее last_version (или только текущей)."""
+    sections = changelog_sections()
+    if last_version:
+        sections = [s for s in sections if version_tuple(s[0]) > version_tuple(last_version)]
+    else:
+        sections = [s for s in sections if s[0] == VERSION]
+    if not sections:
+        return None
+    to_html = lambda t: re.sub(r"`([^`]+)`", r"<code>\1</code>", html.escape(t, quote=False))
+    lines = [f"🆕 <b>StopICE-бот обновлён до v{VERSION}</b>"]
+    for version, items in sections[:5]:
+        lines.append("")
+        if len(sections) > 1:
+            lines.append(f"<b>{html.escape(version)}</b>")
+        lines += [f"• {to_html(i)}" for i in items]
+    return "\n".join(lines)
+
+
+def announce_update(cfg, state):
+    last = state.get("last_version")
+    if last == VERSION:
+        return
+    notes = release_notes(last)
+    if notes:
+        try:
+            send_text(cfg, notes)
+            log(f"Release notes v{VERSION} отправлены в Telegram")
+        except Exception as e:
+            log(f"Не удалось отправить release notes: {e}")
+            return  # попробуем при следующем запуске
+    state["last_version"] = VERSION
+    save_state(state)
 
 
 def main():
@@ -348,6 +416,11 @@ def main():
         log("Не заполнены настройки: " + ", ".join(missing))
         sys.exit(1)
 
+    runtime = {
+        "cfg": cfg,
+        "options": json.loads(OPTIONS_FILE.read_text(encoding="utf-8")) if OPTIONS_FILE.exists() else {},
+        "recent": OrderedDict(),
+    }
     locations = cfg["locations"]
     interval = max(30, int(cfg["poll_interval"]))
     state = load_state()
@@ -369,10 +442,19 @@ def main():
             send_alert(cfg, sightings[0], min(locations, key=lambda l: distance_to(l, sightings[0]) or 1e9))
         return
 
+    if os.environ.get("SUPERVISOR_TOKEN") or "--ui" in sys.argv:
+        try:
+            import web
+            web.start(runtime, WEB_PORT, log)
+        except Exception as e:
+            log(f"Карта точек не запустилась: {e}")
+
+    announce_update(cfg, state)
     started = False
     while True:
         cycle_start = time.monotonic()
-        counts = poll_once(cfg, state, locations)
+        locations = cfg["locations"]  # могли поменяться через карту
+        counts = poll_once(cfg, state, locations, runtime["recent"])
         if not started:
             started = True
             log("Опрос работает — " + "; ".join(counts))

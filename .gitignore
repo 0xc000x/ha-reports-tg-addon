@@ -2,3 +2,4 @@
 seen.json
 *.zip
 __pycache__/
+locations_local.json

@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StopICE точки</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1c1f24; --muted: #6b7280; --border: #e2e5ea;
+    --accent: #2563eb; --accent-soft: #dbe7ff; --danger: #dc2626; --ok: #16a34a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111418; --panel: #1b1f25; --text: #e8eaed; --muted: #9aa3ad; --border: #2c323a;
+      --accent: #5b8def; --accent-soft: #23314d; --danger: #f87171; --ok: #4ade80;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .app { display: flex; height: 100%; }
+  aside { width: 340px; flex: none; display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--border); }
+  #map { flex: 1; }
+  header { padding: 14px 16px 10px; border-bottom: 1px solid var(--border); }
+  h1 { font-size: 16px; margin: 0 0 4px; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .search { display: flex; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  input[type=text], input[type=number] {
+    width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--text); font: inherit;
+  }
+  button {
+    padding: 7px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel);
+    color: var(--text); font: inherit; cursor: pointer; white-space: nowrap;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--danger); }
+  button:disabled { opacity: .5; cursor: default; }
+  #list { flex: 1; overflow-y: auto; padding: 6px 0; }
+  .item { padding: 8px 16px; cursor: pointer; border-left: 3px solid transparent; }
+  .item:hover { background: var(--bg); }
+  .item.sel { background: var(--accent-soft); border-left-color: var(--accent); }
+  .item .name { font-weight: 600; }
+  .item .meta { color: var(--muted); font-size: 12px; }
+  .editor { padding: 12px 16px; border-top: 1px solid var(--border); display: grid; gap: 8px; }
+  .editor[hidden] { display: none; }
+  .editor label { font-size: 12px; color: var(--muted); }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row input[type=range] { flex: 1; }
+  .row input[type=number] { width: 76px; }
+  footer { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #status { font-size: 12px; color: var(--muted); flex-basis: 100%; }
+  #status.err { color: var(--danger); }
+  #status.ok { color: var(--ok); }
+  .legend { color: var(--muted); font-size: 12px; padding: 0 16px 8px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin: 0 3px 0 8px; vertical-align: middle; }
+  .dot:first-child { margin-left: 0; }
+  @media (max-width: 760px) {
+    .app { flex-direction: column; }
+    aside { width: 100%; height: 52%; border-right: 0; border-bottom: 1px solid var(--border); order: 2; }
+    #map { height: 48%; flex: none; order: 1; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <header>
+      <h1>Точки наблюдения</h1>
+      <div class="hint">Выберите точку в списке и кликните по карте, чтобы перенести её центр (или перетащите маркер). Если ничего не выбрано, клик создаёт новую точку.</div>
+    </header>
+    <form class="search" id="searchForm">
+      <input type="text" id="searchInput" placeholder="Найти адрес или город">
+      <button type="submit">Найти</button>
+    </form>
+    <div id="list"></div>
+    <div class="legend">
+      Репорты за последнее время:
+      <span class="dot" style="background:#ef4444"></span>stopice
+      <span class="dot" style="background:#a855f7"></span>iceout / antifreeze
+    </div>
+    <div class="editor" id="editor" hidden>
+      <div>
+        <label for="nameInput">Название</label>
+        <input type="text" id="nameInput" maxlength="80">
+      </div>
+      <div>
+        <label for="radiusRange">Радиус, мили</label>
+        <div class="row">
+          <input type="range" id="radiusRange" min="1" max="200" step="1">
+          <input type="number" id="radiusNumber" min="1" max="200" step="1">
+        </div>
+      </div>
+      <div class="hint" id="coords"></div>
+      <div class="row">
+        <button type="button" id="deselectBtn">Готово</button>
+        <button type="button" class="danger" id="deleteBtn">Удалить точку</button>
+      </div>
+    </div>
+    <footer>
+      <button type="button" id="addBtn">+ Новая точка</button>
+      <button type="button" id="fitBtn">Показать все</button>
+      <button type="button" class="primary" id="saveBtn" disabled>Сохранить</button>
+      <div id="status"></div>
+    </footer>
+  </aside>
+  <div id="map"></div>
+</div>
+<script>
+const MILE = 1609.344;
+const $ = (id) => document.getElementById(id);
+let locs = [];
+let sel = -1;
+let dirty = false;
+const layers = [];
+
+const map = L.map("map", { zoomControl: true }).setView([38.59, -121.38], 9);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 18, attribution: "&copy; OpenStreetMap",
+}).addTo(map);
+const reportLayer = L.layerGroup().addTo(map);
+
+function setStatus(text, cls = "") {
+  $("status").textContent = text;
+  $("status").className = cls;
+}
+
+function markDirty() {
+  dirty = true;
+  $("saveBtn").disabled = false;
+  setStatus("Есть несохранённые изменения");
+}
+
+function render() {
+  layers.forEach((l) => map.removeLayer(l));
+  layers.length = 0;
+  locs.forEach((loc, i) => {
+    const active = i === sel;
+    const circle = L.circle([loc.latitude, loc.longitude], {
+      radius: loc.distance_miles * MILE,
+      color: active ? "#2563eb" : "#64748b",
+      weight: active ? 3 : 1.5,
+      fillOpacity: active ? 0.15 : 0.06,
+    }).addTo(map);
+    circle.bindTooltip(`${loc.name} — ${loc.distance_miles} mi`);
+    circle.on("click", (e) => {
+      L.DomEvent.stopPropagation(e);
+      if (locs[sel]) moveSelected(e.latlng); else select(i);
+    });
+    layers.push(circle);
+    const marker = L.marker([loc.latitude, loc.longitude], { draggable: active, opacity: active ? 1 : 0.7 }).addTo(map);
+    marker.on("click", () => select(i));
+    marker.on("drag", (e) => {
+      const p = e.target.getLatLng();
+      circle.setLatLng(p);
+    });
+    marker.on("dragend", (e) => {
+      const p = e.target.getLatLng();
+      loc.latitude = +p.lat.toFixed(6);
+      loc.longitude = +p.lng.toFixed(6);
+      markDirty();
+      renderList();
+      renderEditor();
+    });
+    layers.push(marker);
+  });
+  renderList();
+  renderEditor();
+}
+
+function renderList() {
+  const list = $("list");
+  list.replaceChildren();
+  if (!locs.length) {
+    const empty = document.createElement("div");
+    empty.className = "item";
+    empty.textContent = "Точек нет — кликните по карте, чтобы создать.";
+    list.append(empty);
+  }
+  locs.forEach((loc, i) => {
+    const item = document.createElement("div");
+    item.className = "item" + (i === sel ? " sel" : "");
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = loc.name || "(без названия)";
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `${loc.distance_miles} mi · ${loc.latitude.toFixed(4)}, ${loc.longitude.toFixed(4)}`;
+    item.append(name, meta);
+    item.onclick = () => select(i, true);
+    list.append(item);
+  });
+}
+
+function renderEditor() {
+  const loc = locs[sel];
+  $("editor").hidden = !loc;
+  if (!loc) return;
+  if (document.activeElement !== $("nameInput")) $("nameInput").value = loc.name;
+  $("radiusRange").value = loc.distance_miles;
+  if (document.activeElement !== $("radiusNumber")) $("radiusNumber").value = loc.distance_miles;
+  $("coords").textContent = `Центр: ${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}`;
+}
+
+function select(i, fly = false) {
+  sel = i;
+  render();
+  if (fly && locs[i]) map.fitBounds(layers[i * 2].getBounds(), { padding: [30, 30], maxZoom: 14 });
+}
+
+function setRadius(value) {
+  const loc = locs[sel];
+  if (!loc) return;
+  const v = Math.max(1, Math.min(200, Math.round(+value || 1)));
+  loc.distance_miles = v;
+  layers[sel * 2].setRadius(v * MILE);
+  layers[sel * 2].setTooltipContent(`${loc.name} — ${v} mi`);
+  $("radiusRange").value = v;
+  if (document.activeElement !== $("radiusNumber")) $("radiusNumber").value = v;
+  markDirty();
+  renderList();
+}
+
+function addAt(latlng) {
+  locs.push({
+    name: `Точка ${locs.length + 1}`,
+    latitude: +latlng.lat.toFixed(6),
+    longitude: +latlng.lng.toFixed(6),
+    distance_miles: 5,
+  });
+  sel = locs.length - 1;
+  markDirty();
+  render();
+  $("nameInput").focus();
+  $("nameInput").select();
+}
+
+function moveSelected(latlng) {
+  const loc = locs[sel];
+  loc.latitude = +latlng.lat.toFixed(6);
+  loc.longitude = +latlng.lng.toFixed(6);
+  markDirty();
+  render();
+}
+
+map.on("click", (e) => {
+  if (locs[sel]) moveSelected(e.latlng); else addAt(e.latlng);
+});
+
+$("nameInput").addEventListener("input", (e) => {
+  const loc = locs[sel];
+  if (!loc) return;
+  loc.name = e.target.value;
+  markDirty();
+  renderList();
+});
+$("radiusRange").addEventListener("input", (e) => setRadius(e.target.value));
+$("radiusNumber").addEventListener("input", (e) => { if (e.target.value) setRadius(e.target.value); });
+$("deselectBtn").onclick = () => { sel = -1; render(); };
+$("deleteBtn").onclick = () => {
+  const loc = locs[sel];
+  if (!loc || !confirm(`Удалить точку «${loc.name}»?`)) return;
+  locs.splice(sel, 1);
+  sel = -1;
+  markDirty();
+  render();
+};
+$("addBtn").onclick = () => addAt(map.getCenter());
+$("fitBtn").onclick = fitAll;
+
+function fitAll() {
+  const circles = layers.filter((_, i) => i % 2 === 0);
+  if (!circles.length) return;
+  map.invalidateSize();
+  map.fitBounds(L.featureGroup(circles).getBounds(), { padding: [20, 20], maxZoom: 13 });
+}
+
+$("saveBtn").onclick = async () => {
+  const bad = locs.find((l) => !l.name.trim());
+  if (bad) { setStatus("У каждой точки должно быть название", "err"); return; }
+  if (!locs.length) { setStatus("Нужна хотя бы одна точка", "err"); return; }
+  $("saveBtn").disabled = true;
+  setStatus("Сохраняю…");
+  try {
+    const resp = await fetch("api/locations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locations: locs }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || resp.status);
+    locs = data.locations;
+    dirty = false;
+    setStatus("Сохранено. Бот применит точки в следующем цикле опроса.", "ok");
+    render();
+  } catch (err) {
+    $("saveBtn").disabled = false;
+    setStatus("Ошибка: " + err.message, "err");
+  }
+};
+
+$("searchForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = $("searchInput").value.trim();
+  if (!q) return;
+  setStatus("Ищу…");
+  try {
+    const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q=" + encodeURIComponent(q);
+    const res = await (await fetch(url)).json();
+    if (!res.length) { setStatus("Ничего не найдено", "err"); return; }
+    map.setView([+res[0].lat, +res[0].lon], 12);
+    setStatus(dirty ? "Есть несохранённые изменения" : "Найдено: кликните по карте, чтобы поставить точку");
+  } catch (err) {
+    setStatus("Поиск не удался: " + err.message, "err");
+  }
+});
+
+window.addEventListener("resize", () => map.invalidateSize());
+window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+async function loadReports() {
+  try {
+    const data = await (await fetch("api/reports")).json();
+    reportLayer.clearLayers();
+    for (const r of data.reports) {
+      const lat = +r.lat, lon = +r.long;
+      if (!isFinite(lat) || !isFinite(lon)) continue;
+      const color = r.source === "stopice.net" ? "#ef4444" : "#a855f7";
+      const m = L.circleMarker([lat, lon], { radius: 5, color, weight: 1, fillColor: color, fillOpacity: 0.8 });
+      const box = document.createElement("div");
+      const b = document.createElement("b");
+      b.textContent = r.status || "";
+      const addr = document.createElement("div");
+      addr.textContent = r.address || "";
+      const time = document.createElement("div");
+      time.textContent = r.created || "";
+      box.append(b, addr, time);
+      m.bindPopup(box);
+      reportLayer.addLayer(m);
+    }
+  } catch (err) { /* репорты на карте — необязательная часть */ }
+}
+
+(async function init() {
+  try {
+    const data = await (await fetch("api/locations")).json();
+    locs = data.locations || [];
+    render();
+    requestAnimationFrame(fitAll);
+  } catch (err) {
+    setStatus("Не удалось загрузить точки: " + err.message, "err");
+  }
+  loadReports();
+  setInterval(loadReports, 60000);
+})();
+</script>
+</body>
+</html>
