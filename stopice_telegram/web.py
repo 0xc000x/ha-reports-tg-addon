@@ -1,4 +1,6 @@
 """Веб-интерфейс add-on'а (Ingress): карта для выбора точек и радиусов."""
+import base64
+import hmac
 import json
 import os
 import re
@@ -106,10 +108,25 @@ def start(runtime, port, log):
             pass
 
         def allowed(self):
-            if SUPERVISOR_TOKEN and self.client_address[0] != INGRESS_PROXY:
-                self.send_error(403)
-                return False
-            return True
+            # через Ingress пользователь уже авторизован в Home Assistant
+            if not SUPERVISOR_TOKEN or self.client_address[0] == INGRESS_PROXY:
+                return True
+            # прямой доступ по порту из сети: пароль, если он задан в настройках
+            password = str(runtime["cfg"].get("web_password") or "")
+            if not password:
+                return True
+            header = self.headers.get("Authorization") or ""
+            try:
+                given = base64.b64decode(header[6:]).decode("utf-8").partition(":")[2]                     if header.startswith("Basic ") else ""
+            except ValueError:
+                given = ""
+            if hmac.compare_digest(given.encode(), password.encode()):
+                return True
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="StopICE", charset="UTF-8"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return False
 
         def send(self, code, body, ctype="application/json; charset=utf-8", cache="no-store"):
             data = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()

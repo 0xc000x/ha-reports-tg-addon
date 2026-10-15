@@ -20,7 +20,7 @@ try:
 except Exception:
     PACIFIC = None
 
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 USER_AGENT = f"StopICE-Telegram-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
