@@ -1,0 +1,36 @@
+name: StopICE Telegram
+version: "1.2.0"
+slug: stopice_telegram
+description: Новые репорты stopice.net и antifreeze.app (в т.ч. iceout.org) рядом с вами — в Telegram
+url: https://github.com/0xc000x/ha-reports-tg-addon
+arch:
+  - aarch64
+  - amd64
+  - armv7
+init: false
+startup: application
+boot: auto
+options:
+  stopice_api_key: ""
+  telegram_bot_token: ""
+  telegram_chat_id: ""
+  locations:
+    - name: La Riviera
+      latitude: 38.59
+      longitude: -121.38
+      distance_miles: 20
+  antifreeze_enabled: true
+  poll_interval: 60
+  notify_on_start: true
+schema:
+  stopice_api_key: password
+  telegram_bot_token: password
+  telegram_chat_id: str
+  locations:
+    - name: str
+      latitude: float
+      longitude: float
+      distance_miles: int(1,200)
+  antifreeze_enabled: bool
+  poll_interval: int(30,3600)
+  notify_on_start: bool
