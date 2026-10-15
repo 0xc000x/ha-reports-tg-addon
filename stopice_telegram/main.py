@@ -18,7 +18,7 @@ try:
 except Exception:
     PACIFIC = None
 
-VERSION = "1.2.0"
+VERSION = "1.2.1"
 USER_AGENT = f"StopICE-Telegram-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -49,6 +49,7 @@ def load_config():
             cfg["locations"] = [{"name": "Основная", "latitude": cfg["latitude"],
                                  "longitude": cfg["longitude"], "distance_miles": cfg["distance_miles"]}]
         cfg.setdefault("antifreeze_enabled", True)
+        cfg.setdefault("notify_on_start", True)
         return cfg
     # локальный запуск: переменные окружения или .env рядом / уровнем выше
     env = dict(os.environ)

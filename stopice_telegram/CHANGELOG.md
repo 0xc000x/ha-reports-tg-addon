@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.1
+- Опции `antifreeze_enabled` и `notify_on_start` стали необязательными: настройки от прошлых версий сохраняются без ошибки.
+
 ## 1.2.0
 - Добавлен источник antifreeze.app (включая репорты iceout.org).
 - Копии репортов stopice.net из antifreeze пропускаются.
