@@ -20,7 +20,7 @@ try:
 except Exception:
     PACIFIC = None
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 USER_AGENT = f"StopICE-Telegram-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -420,6 +420,7 @@ def main():
         "cfg": cfg,
         "options": json.loads(OPTIONS_FILE.read_text(encoding="utf-8")) if OPTIONS_FILE.exists() else {},
         "recent": OrderedDict(),
+        "user_agent": USER_AGENT,
     }
     locations = cfg["locations"]
     interval = max(30, int(cfg["poll_interval"]))

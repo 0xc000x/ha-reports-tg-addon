@@ -1,15 +1,42 @@
 """Веб-интерфейс add-on'а (Ingress): карта для выбора точек и радиусов."""
 import json
 import os
+import re
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from collections import OrderedDict
 from pathlib import Path
 
 INDEX = Path(__file__).with_name("index.html")
 INGRESS_PROXY = "172.30.32.2"  # единственный адрес, с которого Supervisor ходит в Ingress
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN")
+TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+TILE_PATH = re.compile(r"^/tiles/(\d{1,2})/(\d{1,7})/(\d{1,7})\.png$")
+TILE_CACHE_SIZE = 800  # ~10–20 МБ памяти
+_tile_cache = OrderedDict()
+_tile_lock = threading.Lock()
+
+
+def get_tile(z, x, y, user_agent):
+    """Тайл OpenStreetMap через сервер add-on'а: со своим User-Agent и кэшем, как требует политика OSM."""
+    if z > 19 or x >= 2 ** z or y >= 2 ** z:
+        raise ValueError("bad tile")
+    key = (z, x, y)
+    with _tile_lock:
+        if key in _tile_cache:
+            _tile_cache.move_to_end(key)
+            return _tile_cache[key]
+    req = urllib.request.Request(TILE_URL.format(z=z, x=x, y=y), headers={"User-Agent": user_agent})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = resp.read()
+    with _tile_lock:
+        _tile_cache[key] = data
+        while len(_tile_cache) > TILE_CACHE_SIZE:
+            _tile_cache.popitem(last=False)
+    return data
 
 
 def validate_locations(raw):
@@ -32,6 +59,19 @@ def validate_locations(raw):
             raise ValueError(f"{name}: радиус должен быть от 1 до 200 миль")
         result.append({"name": name, "latitude": lat, "longitude": lon, "distance_miles": dist})
     return result
+
+
+def geocode(query, user_agent):
+    """Поиск адреса через Nominatim с сервера add-on'а (со своим User-Agent, как требует их политика)."""
+    query = query.strip()[:200]
+    if not query:
+        return []
+    url = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode(
+        {"format": "json", "limit": 1, "countrycodes": "us", "q": query})
+    req = urllib.request.Request(url, headers={"User-Agent": user_agent})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return [{"lat": r["lat"], "lon": r["lon"], "name": r.get("display_name")}
+                for r in json.loads(resp.read())]
 
 
 def save_locations(runtime, locations):
@@ -71,12 +111,12 @@ def start(runtime, port, log):
                 return False
             return True
 
-        def send(self, code, body, ctype="application/json; charset=utf-8"):
+        def send(self, code, body, ctype="application/json; charset=utf-8", cache="no-store"):
             data = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", cache)
             self.end_headers()
             self.wfile.write(data)
 
@@ -84,10 +124,23 @@ def start(runtime, port, log):
             if not self.allowed():
                 return
             path = self.path.split("?")[0]
-            if path in ("/", "/index.html"):
+            tile = TILE_PATH.match(path)
+            if tile:
+                try:
+                    data = get_tile(*map(int, tile.groups()), runtime.get("user_agent", "StopICE-Telegram"))
+                    self.send(200, data, "image/png", "public, max-age=604800")
+                except Exception:
+                    self.send(502, b"", "image/png")
+            elif path in ("/", "/index.html"):
                 self.send(200, INDEX.read_bytes(), "text/html; charset=utf-8")
             elif path == "/api/locations":
                 self.send(200, {"locations": runtime["cfg"]["locations"]})
+            elif path == "/api/geocode":
+                query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("q", [""])[0]
+                try:
+                    self.send(200, geocode(query, runtime.get("user_agent", "StopICE-Telegram")))
+                except Exception as e:
+                    self.send(502, {"error": f"поиск не удался: {e}"})
             elif path == "/api/reports":
                 self.send(200, {"reports": list(runtime["recent"].values())})
             else:

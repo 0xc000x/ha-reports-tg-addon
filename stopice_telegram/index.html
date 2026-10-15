@@ -57,6 +57,9 @@
   .legend { color: var(--muted); font-size: 12px; padding: 0 16px 8px; }
   .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin: 0 3px 0 8px; vertical-align: middle; }
   .dot:first-child { margin-left: 0; }
+  @media (prefers-color-scheme: dark) {
+    .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.95) contrast(.9); }
+  }
   @media (max-width: 760px) {
     .app { flex-direction: column; }
     aside { width: 100%; height: 52%; border-right: 0; border-bottom: 1px solid var(--border); order: 2; }
@@ -117,8 +120,11 @@ let dirty = false;
 const layers = [];
 
 const map = L.map("map", { zoomControl: true }).setView([38.59, -121.38], 9);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 18, attribution: "&copy; OpenStreetMap",
+// Тайлы OpenStreetMap идут через сервер add-on'а (tiles/...): напрямую OSM блокирует
+// запросы без Referer, а браузер не отправляет его из Ingress Home Assistant.
+L.tileLayer("tiles/{z}/{x}/{y}.png", {
+  maxZoom: 19,
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
 }).addTo(map);
 const reportLayer = L.layerGroup().addTo(map);
 
@@ -307,8 +313,9 @@ $("searchForm").addEventListener("submit", async (e) => {
   if (!q) return;
   setStatus("Ищу…");
   try {
-    const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=us&q=" + encodeURIComponent(q);
-    const res = await (await fetch(url)).json();
+    const resp = await fetch("api/geocode?q=" + encodeURIComponent(q));
+    const res = await resp.json();
+    if (!resp.ok) throw new Error(res.error || resp.status);
     if (!res.length) { setStatus("Ничего не найдено", "err"); return; }
     map.setView([+res[0].lat, +res[0].lon], 12);
     setStatus(dirty ? "Есть несохранённые изменения" : "Найдено: кликните по карте, чтобы поставить точку");
