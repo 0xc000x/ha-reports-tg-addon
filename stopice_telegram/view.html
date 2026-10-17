@@ -30,9 +30,12 @@
 <div id="map"></div>
 <script>
 const MILE = 1609.344;
+// Публичная копия страницы (папка /local Home Assistant) берёт данные из data.json, а не из API add-on'а.
+const DATA_FILE = null;
 const map = L.map("map").setView([38.59, -121.38], 9);
-L.tileLayer("tiles/{z}/{x}/{y}.png", {
-  maxZoom: 19,
+// Через add-on тайлы идут с его сервера; публичная копия грузит их напрямую с OSM, явно отправляя Referer.
+L.tileLayer(DATA_FILE ? "https://tile.openstreetmap.org/{z}/{x}/{y}.png" : "tiles/{z}/{x}/{y}.png", {
+  maxZoom: 19, referrerPolicy: "strict-origin-when-cross-origin",
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
 }).addTo(map);
 const zoneLayer = L.featureGroup().addTo(map);
@@ -49,6 +52,13 @@ info.onAdd = () => {
 };
 info.addTo(map);
 
+async function getJSON(apiPath) {
+  const url = DATA_FILE ? `${DATA_FILE}?t=${Date.now()}` : apiPath;
+  const resp = await fetch(url, { cache: "no-store" });
+  if (!resp.ok) throw new Error(resp.status);
+  return resp.json();
+}
+
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -57,7 +67,7 @@ function el(tag, cls, text) {
 }
 
 async function loadZones(fit) {
-  const data = await (await fetch("api/locations")).json();
+  const data = await getJSON("api/locations");
   zoneLayer.clearLayers();
   for (const loc of data.locations || []) {
     const c = L.circle([loc.latitude, loc.longitude], {
@@ -76,7 +86,7 @@ async function loadZones(fit) {
 
 async function loadReports() {
   try {
-    const data = await (await fetch("api/reports?today=1")).json();
+    const data = await getJSON("api/reports?today=1");
     reportLayer.clearLayers();
     let n = 0;
     for (const r of data.reports || []) {

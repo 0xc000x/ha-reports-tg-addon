@@ -4,6 +4,8 @@ import hmac
 import json
 import os
 import re
+import secrets
+import shutil
 import threading
 import urllib.error
 import urllib.parse
@@ -84,6 +86,38 @@ def today_reports(runtime):
     start = datetime.combine(datetime.now(tz).date(), dtime.min, tzinfo=tz).timestamp()
     end = start + 24 * 3600
     return [r for r in runtime["recent"].values() if r.get("ts") and start <= r["ts"] < end]
+
+
+PUBLIC_ROOT = Path("/homeassistant/www")  # отдаётся Home Assistant без входа по адресу /local/...
+
+
+def publish_public(runtime, state, enabled, log):
+    """Публичная страница просмотра в /config/www: открывается без входа, в том числе через Home Assistant Cloud."""
+    token = state.get("public_token")
+    if not enabled:
+        if token and (PUBLIC_ROOT / f"stopice_{token}").exists():
+            shutil.rmtree(PUBLIC_ROOT / f"stopice_{token}", ignore_errors=True)
+            log("Публичная карта выключена, файлы удалены")
+        return False
+    if not PUBLIC_ROOT.parent.exists():
+        return False  # нет доступа к папке конфигурации Home Assistant (локальный запуск)
+    first = not token
+    if first:
+        # случайное имя папки, чтобы адрес нельзя было угадать
+        token = state["public_token"] = secrets.token_urlsafe(9)
+    folder = PUBLIC_ROOT / f"stopice_{token}"
+    folder.mkdir(parents=True, exist_ok=True)
+    page = VIEW.read_text(encoding="utf-8").replace("const DATA_FILE = null;", 'const DATA_FILE = "data.json";')
+    (folder / "index.html").write_text(page, encoding="utf-8")
+    data = {"locations": runtime["cfg"]["locations"], "reports": today_reports(runtime),
+            "generated": datetime.now(runtime.get("tz")).isoformat()}
+    tmp = folder / "data.json.tmp"
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(folder / "data.json")
+    if first or not runtime.get("public_logged"):
+        runtime["public_logged"] = True
+        log(f"Публичная карта: <адрес Home Assistant>/local/stopice_{token}/index.html")
+    return first
 
 
 def save_locations(runtime, locations):

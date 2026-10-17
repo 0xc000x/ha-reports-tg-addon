@@ -21,7 +21,7 @@ except Exception:
     PACIFIC = None
 LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 USER_AGENT = f"StopICE-Telegram-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -477,6 +477,12 @@ def main():
         cycle_start = time.monotonic()
         locations = cfg["locations"]  # могли поменяться через карту
         counts = poll_once(cfg, state, locations, runtime["recent"])
+        try:
+            import web
+            if web.publish_public(runtime, state, bool(cfg.get("public_page")), log):
+                save_state(state)
+        except Exception as e:
+            log(f"Публичная карта: ошибка: {e}")
         if not started:
             started = True
             log("Опрос работает — " + "; ".join(counts))
