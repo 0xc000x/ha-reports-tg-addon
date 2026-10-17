@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StopICE карта</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { --panel: rgba(255, 255, 255, .92); --text: #1c1f24; --muted: #6b7280; --bg: #e5e3df; }
+  @media (prefers-color-scheme: dark) {
+    :root { --panel: rgba(27, 31, 37, .92); --text: #e8eaed; --muted: #9aa3ad; --bg: #1b1f25; }
+    .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.95) contrast(.9); }
+  }
+  html, body, #map { height: 100%; margin: 0; }
+  body { background: var(--bg); font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .info {
+    background: var(--panel); color: var(--text); padding: 8px 10px; border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .25); max-width: 240px;
+  }
+  .info b { display: block; margin-bottom: 2px; }
+  .info .muted { color: var(--muted); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  .popup b { display: block; margin-bottom: 4px; }
+  .popup .desc { margin-top: 6px; max-width: 260px; white-space: pre-line; }
+  .popup .muted { color: #6b7280; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<script>
+const MILE = 1609.344;
+const map = L.map("map").setView([38.59, -121.38], 9);
+L.tileLayer("tiles/{z}/{x}/{y}.png", {
+  maxZoom: 19,
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
+}).addTo(map);
+const zoneLayer = L.featureGroup().addTo(map);
+const reportLayer = L.layerGroup().addTo(map);
+
+const info = L.control({ position: "topright" });
+info.onAdd = () => {
+  const div = L.DomUtil.create("div", "info");
+  div.innerHTML = '<b id="title">Репорты за сегодня</b>'
+    + '<div id="count" class="muted">загрузка…</div>'
+    + '<div><span class="dot" style="background:#ef4444"></span>stopice.net</div>'
+    + '<div><span class="dot" style="background:#a855f7"></span>iceout / antifreeze</div>';
+  return div;
+};
+info.addTo(map);
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text) e.textContent = text;
+  return e;
+}
+
+async function loadZones(fit) {
+  const data = await (await fetch("api/locations")).json();
+  zoneLayer.clearLayers();
+  for (const loc of data.locations || []) {
+    const c = L.circle([loc.latitude, loc.longitude], {
+      radius: loc.distance_miles * MILE, color: "#2563eb", weight: 1.5, fillOpacity: 0.07, interactive: true,
+    });
+    c.bindTooltip(`${loc.name} — ${loc.distance_miles} mi`, { sticky: true });
+    zoneLayer.addLayer(c);
+  }
+  if (fit && zoneLayer.getLayers().length) {
+    requestAnimationFrame(() => {
+      map.invalidateSize();
+      map.fitBounds(zoneLayer.getBounds(), { padding: [20, 20], maxZoom: 13 });
+    });
+  }
+}
+
+async function loadReports() {
+  try {
+    const data = await (await fetch("api/reports?today=1")).json();
+    reportLayer.clearLayers();
+    let n = 0;
+    for (const r of data.reports || []) {
+      const lat = +r.lat, lon = +r.long;
+      if (!isFinite(lat) || !isFinite(lon)) continue;
+      n++;
+      const color = r.source === "stopice.net" ? "#ef4444" : "#a855f7";
+      const m = L.circleMarker([lat, lon], { radius: 6, color: "#fff", weight: 1.5, fillColor: color, fillOpacity: 0.95 });
+      const box = el("div", "popup");
+      box.append(el("b", "", r.status || ""), el("div", "", r.address || ""), el("div", "muted", r.created || ""));
+      if (r.description) box.append(el("div", "desc", r.description));
+      if (r.url) {
+        const a = el("a", "", "Открыть репорт");
+        a.href = r.url; a.target = "_blank"; a.rel = "noopener";
+        box.append(el("div"), a);
+      }
+      m.bindPopup(box);
+      reportLayer.addLayer(m);
+    }
+    const today = new Date().toLocaleDateString("ru-RU", { day: "numeric", month: "long", timeZone: "America/Los_Angeles" });
+    document.getElementById("title").textContent = `Репорты за ${today}`;
+    document.getElementById("count").textContent = n ? `${n} шт. в зонах` : "пока нет";
+  } catch (err) {
+    document.getElementById("count").textContent = "не удалось загрузить";
+  }
+}
+
+window.addEventListener("resize", () => map.invalidateSize());
+loadZones(true).catch(() => {});
+loadReports();
+setInterval(loadReports, 60000);
+setInterval(() => loadZones(false).catch(() => {}), 10 * 60000);
+</script>
+</body>
+</html>

@@ -10,9 +10,11 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from collections import OrderedDict
+from datetime import datetime, time as dtime
 from pathlib import Path
 
-INDEX = Path(__file__).with_name("index.html")
+INDEX = Path(__file__).with_name("index.html")  # редактор точек (боковая панель HA)
+VIEW = Path(__file__).with_name("view.html")  # карта только для просмотра (прямой доступ по порту)
 INGRESS_PROXY = "172.30.32.2"  # единственный адрес, с которого Supervisor ходит в Ingress
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN")
 TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -76,6 +78,14 @@ def geocode(query, user_agent):
                 for r in json.loads(resp.read())]
 
 
+def today_reports(runtime):
+    """Репорты за сегодня, с полуночи до полуночи по тихоокеанскому времени."""
+    tz = runtime.get("tz")
+    start = datetime.combine(datetime.now(tz).date(), dtime.min, tzinfo=tz).timestamp()
+    end = start + 24 * 3600
+    return [r for r in runtime["recent"].values() if r.get("ts") and start <= r["ts"] < end]
+
+
 def save_locations(runtime, locations):
     """Сохраняет точки в настройки add-on'а через Supervisor (переживут перезапуск)."""
     if not SUPERVISOR_TOKEN:  # локальный запуск без Home Assistant
@@ -106,6 +116,10 @@ def start(runtime, port, log):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
+
+        def is_admin(self):
+            # редактировать точки можно только через Ingress (боковую панель Home Assistant)
+            return not SUPERVISOR_TOKEN or self.client_address[0] == INGRESS_PROXY
 
         def allowed(self):
             # через Ingress пользователь уже авторизован в Home Assistant
@@ -149,17 +163,22 @@ def start(runtime, port, log):
                 except Exception:
                     self.send(502, b"", "image/png")
             elif path in ("/", "/index.html"):
-                self.send(200, INDEX.read_bytes(), "text/html; charset=utf-8")
+                page = INDEX if self.is_admin() else VIEW
+                self.send(200, page.read_bytes(), "text/html; charset=utf-8")
+            elif path == "/view":
+                self.send(200, VIEW.read_bytes(), "text/html; charset=utf-8")
             elif path == "/api/locations":
                 self.send(200, {"locations": runtime["cfg"]["locations"]})
-            elif path == "/api/geocode":
+            elif path == "/api/geocode" and self.is_admin():
                 query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("q", [""])[0]
                 try:
                     self.send(200, geocode(query, runtime.get("user_agent", "StopICE-Telegram")))
                 except Exception as e:
                     self.send(502, {"error": f"поиск не удался: {e}"})
             elif path == "/api/reports":
-                self.send(200, {"reports": list(runtime["recent"].values())})
+                today = "today=1" in self.path or not self.is_admin()
+                reports = today_reports(runtime) if today else list(runtime["recent"].values())
+                self.send(200, {"reports": reports})
             else:
                 self.send(404, {"error": "not found"})
 
@@ -168,6 +187,9 @@ def start(runtime, port, log):
                 return
             if self.path.split("?")[0] != "/api/locations":
                 self.send(404, {"error": "not found"})
+                return
+            if not self.is_admin():
+                self.send(403, {"error": "точки можно менять только через Home Assistant"})
                 return
             try:
                 length = int(self.headers.get("Content-Length") or 0)

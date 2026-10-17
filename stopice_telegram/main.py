@@ -10,7 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from http.client import IncompleteRead
 from pathlib import Path
 
@@ -19,8 +19,9 @@ try:
     PACIFIC = ZoneInfo("America/Los_Angeles")
 except Exception:
     PACIFIC = None
+LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 USER_AGENT = f"StopICE-Telegram-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -147,6 +148,15 @@ def fetch_stopice_once(cfg, loc):
     return alerts  # свежие первыми
 
 
+def parse_stopice_time(value):
+    """'OCT 11, 2026 (14:22:17)' (тихоокеанское время) -> unix-время или None."""
+    try:
+        dt = datetime.strptime(str(value).strip(), "%b %d, %Y (%H:%M:%S)")
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=LOCAL_TZ).timestamp()
+
+
 def normalize_stopice(a):
     priority = str(a.get("priority", "")).strip()
     media = [u.strip() for u in str(a.get("media") or "").split(",") if u.strip()]
@@ -161,6 +171,7 @@ def normalize_stopice(a):
         "status": PRIORITIES.get(priority, f"❔ СТАТУС {priority}"),
         "address": a.get("address"),
         "created": a.get("created"),
+        "ts": parse_stopice_time(a.get("created")),
         "description": clean_text(a.get("description")),
         "moderator_notes": "\n".join(mod_notes),
         "lat": a.get("lat"),
@@ -188,6 +199,13 @@ def fetch_antifreeze():
     return sightings
 
 
+def parse_iso_time(value):
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
 def format_iso_time(value):
     try:
         dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
@@ -210,6 +228,7 @@ def normalize_antifreeze(s, notes):
         "address": s.get("address"),
         "created": format_iso_time(s.get("createdAt")),
         "sort": str(s.get("createdAt") or ""),
+        "ts": parse_iso_time(s.get("createdAt")),
         "description": clean_text(notes),
         "moderator_notes": "",
         "lat": s.get("latitude"),
@@ -316,7 +335,8 @@ def process(cfg, state, loc, alerts, known_key):
 
 def remember(recent, alerts):
     for a in alerts:
-        recent[a["uid"]] = {k: a.get(k) for k in ("uid", "source", "status", "address", "created", "lat", "long")}
+        recent[a["uid"]] = {k: a.get(k) for k in ("uid", "source", "status", "address", "created", "ts",
+                                             "description", "lat", "long", "url")}
         recent.move_to_end(a["uid"])
     while len(recent) > MAX_RECENT:
         recent.popitem(last=False)
@@ -421,6 +441,7 @@ def main():
         "options": json.loads(OPTIONS_FILE.read_text(encoding="utf-8")) if OPTIONS_FILE.exists() else {},
         "recent": OrderedDict(),
         "user_agent": USER_AGENT,
+        "tz": LOCAL_TZ,
     }
     locations = cfg["locations"]
     interval = max(30, int(cfg["poll_interval"]))

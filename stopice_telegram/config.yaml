@@ -1,5 +1,5 @@
 name: StopICE Telegram
-version: "1.4.0"
+version: "1.5.0"
 slug: stopice_telegram
 description: Новые репорты stopice.net и antifreeze.app (в т.ч. iceout.org) рядом с вами — в Telegram
 url: https://github.com/0xc000x/ha-reports-tg-addon
@@ -18,7 +18,7 @@ hassio_api: true
 ports:
   8099/tcp: null
 ports_description:
-  8099/tcp: Карта точек без входа в Home Assistant (по умолчанию выключено)
+  8099/tcp: Карта репортов за сегодня, только просмотр, без входа в Home Assistant (по умолчанию выключено)
 options:
   stopice_api_key: ""
   telegram_bot_token: ""
