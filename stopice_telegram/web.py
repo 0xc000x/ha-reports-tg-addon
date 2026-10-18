@@ -116,8 +116,33 @@ def publish_public(runtime, state, enabled, log):
     tmp.replace(folder / "data.json")
     if first or not runtime.get("public_logged"):
         runtime["public_logged"] = True
-        log(f"Публичная карта: <адрес Home Assistant>/local/stopice_{token}/index.html")
+        log(f"Публичная карта: {public_url(runtime, state)}")
     return first
+
+
+def ha_external_url():
+    """Внешний адрес Home Assistant из его настроек (Настройки → Система → Сеть), если он задан."""
+    if not SUPERVISOR_TOKEN:
+        return None
+    req = urllib.request.Request("http://supervisor/core/api/config",
+                                 headers={"Authorization": f"Bearer {SUPERVISOR_TOKEN}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read()).get("external_url")
+    except Exception:
+        return None
+
+
+def public_url(runtime, state):
+    """Полная ссылка на публичную карту: адрес из настроек add-on'а или внешний адрес Home Assistant."""
+    token = state.get("public_token")
+    if not token:
+        return None
+    if "base_url" not in runtime:
+        runtime["base_url"] = (str(runtime["cfg"].get("public_base_url") or "").strip()
+                               or ha_external_url() or "")
+    base = runtime["base_url"].rstrip("/") or "<адрес Home Assistant>"
+    return f"{base}/local/stopice_{token}/index.html"
 
 
 def save_locations(runtime, locations):

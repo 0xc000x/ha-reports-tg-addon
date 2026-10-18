@@ -1,5 +1,5 @@
 name: StopICE Telegram
-version: "1.6.0"
+version: "1.6.1"
 slug: stopice_telegram
 description: Новые репорты stopice.net и antifreeze.app (в т.ч. iceout.org) рядом с вами — в Telegram
 url: https://github.com/0xc000x/ha-reports-tg-addon
@@ -15,6 +15,7 @@ ingress_port: 8099
 panel_icon: mdi:map-marker-radius
 panel_title: StopICE
 hassio_api: true
+homeassistant_api: true
 map:
   - homeassistant_config:rw
 ports:
@@ -47,3 +48,4 @@ schema:
   notify_on_start: bool?
   web_password: password?
   public_page: bool?
+  public_base_url: url?

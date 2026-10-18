@@ -21,7 +21,7 @@ except Exception:
     PACIFIC = None
 LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.6.0"
+VERSION = "1.6.1"
 USER_AGENT = f"StopICE-Telegram-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -486,10 +486,19 @@ def main():
         if not started:
             started = True
             log("Опрос работает — " + "; ".join(counts))
+            link = None
+            if cfg.get("public_page"):
+                import web
+                link = web.public_url(runtime, state)
+            text = ""
             if cfg.get("notify_on_start"):
+                text = (f"✅ StopICE-бот v{VERSION} запущен. Точек: {len(locations)}\n"
+                        + html.escape("\n".join(counts)))
+            if link:
+                text += ("\n\n" if text else "") + f"🗺 Ссылка на публичную карту:\n{html.escape(link)}"
+            if text:
                 try:
-                    send_text(cfg, f"✅ StopICE-бот v{VERSION} запущен. Точек: {len(locations)}\n"
-                              + html.escape("\n".join(counts)))
+                    send_text(cfg, text)
                     log("Сообщение о запуске отправлено в Telegram")
                 except Exception as e:
                     log(f"Не удалось отправить сообщение о запуске: {e}")
