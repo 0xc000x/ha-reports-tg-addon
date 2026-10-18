@@ -1,4 +1,4 @@
-"""Опрашивает stopice.net и antifreeze.app и шлёт новые репорты в Telegram."""
+"""ICE Monitor: опрашивает источники репортов об ICE (stopice.net, antifreeze.app) и шлёт новые в Telegram."""
 import html
 import json
 import math
@@ -21,8 +21,8 @@ except Exception:
     PACIFIC = None
 LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.6.1"
-USER_AGENT = f"StopICE-Telegram-HomeAssistant-Addon/{VERSION}"
+VERSION = "1.7.0"
+USER_AGENT = f"ICE-Monitor-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
 STATE_FILE = (Path("/data") if OPTIONS_FILE.exists() else HERE) / "seen.json"
@@ -403,7 +403,7 @@ def release_notes(last_version):
     if not sections:
         return None
     to_html = lambda t: re.sub(r"`([^`]+)`", r"<code>\1</code>", html.escape(t, quote=False))
-    lines = [f"🆕 <b>StopICE-бот обновлён до v{VERSION}</b>"]
+    lines = [f"🆕 <b>ICE Monitor обновлён до v{VERSION}</b>"]
     for version, items in sections[:5]:
         lines.append("")
         if len(sections) > 1:
@@ -492,7 +492,7 @@ def main():
                 link = web.public_url(runtime, state)
             text = ""
             if cfg.get("notify_on_start"):
-                text = (f"✅ StopICE-бот v{VERSION} запущен. Точек: {len(locations)}\n"
+                text = (f"✅ ICE Monitor v{VERSION} запущен. Точек: {len(locations)}\n"
                         + html.escape("\n".join(counts)))
             if link:
                 text += ("\n\n" if text else "") + f"🗺 Ссылка на публичную карту:\n{html.escape(link)}"

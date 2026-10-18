@@ -196,7 +196,7 @@ def start(runtime, port, log):
             if hmac.compare_digest(given.encode(), password.encode()):
                 return True
             self.send_response(401)
-            self.send_header("WWW-Authenticate", 'Basic realm="StopICE", charset="UTF-8"')
+            self.send_header("WWW-Authenticate", 'Basic realm="ICE Monitor", charset="UTF-8"')
             self.send_header("Content-Length", "0")
             self.end_headers()
             return False
@@ -217,7 +217,7 @@ def start(runtime, port, log):
             tile = TILE_PATH.match(path)
             if tile:
                 try:
-                    data = get_tile(*map(int, tile.groups()), runtime.get("user_agent", "StopICE-Telegram"))
+                    data = get_tile(*map(int, tile.groups()), runtime.get("user_agent", "ICE-Monitor"))
                     self.send(200, data, "image/png", "public, max-age=604800")
                 except Exception:
                     self.send(502, b"", "image/png")
@@ -231,7 +231,7 @@ def start(runtime, port, log):
             elif path == "/api/geocode" and self.is_admin():
                 query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("q", [""])[0]
                 try:
-                    self.send(200, geocode(query, runtime.get("user_agent", "StopICE-Telegram")))
+                    self.send(200, geocode(query, runtime.get("user_agent", "ICE-Monitor")))
                 except Exception as e:
                     self.send(502, {"error": f"поиск не удался: {e}"})
             elif path == "/api/reports":
