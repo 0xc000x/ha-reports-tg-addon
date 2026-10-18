@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -21,7 +22,7 @@ except Exception:
     PACIFIC = None
 LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.8.1"
+VERSION = "1.8.2"
 USER_AGENT = f"ICE-Monitor-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -369,6 +370,31 @@ def send_text(cfg, text):
              parse_mode="HTML", disable_web_page_preview="true")
 
 
+def upload_photo(cfg, photo_url, caption):
+    """Скачивает фото и загружает его файлом: по ссылке Telegram не всегда может забрать картинку сам."""
+    req = urllib.request.Request(photo_url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        image = resp.read(10 * 1024 * 1024 + 1)
+    if len(image) > 10 * 1024 * 1024:
+        raise RuntimeError("фото больше 10 МБ")
+    boundary = uuid.uuid4().hex
+    fields = {**destination(cfg), "caption": caption, "parse_mode": "HTML"}
+    body = b"".join(
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
+        for k, v in fields.items())
+    body += (f'--{boundary}\r\nContent-Disposition: form-data; name="photo"; filename="photo.jpg"\r\n'
+             f"Content-Type: application/octet-stream\r\n\r\n").encode() + image
+    body += f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{cfg['telegram_bot_token']}/sendPhoto", data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            resp.read()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Telegram sendPhoto: {e.code} {e.read().decode('utf-8', 'replace')}") from None
+
+
 def send_alert(cfg, alert, loc=None):
     text = format_alert(alert, loc)
     photo = alert.get("photo")
@@ -376,6 +402,11 @@ def send_alert(cfg, alert, loc=None):
         try:
             telegram(cfg, "sendPhoto", **destination(cfg), photo=photo,
                      caption=text, parse_mode="HTML")
+            return
+        except Exception:
+            pass
+        try:
+            upload_photo(cfg, photo, text)
             return
         except Exception as e:
             log(f"Фото не отправилось ({e}), шлю текстом")
