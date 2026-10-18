@@ -1,5 +1,5 @@
 name: ICE Monitor
-version: "1.8.0"
+version: "1.8.1"
 slug: stopice_telegram
 description: Репорты об ICE из нескольких источников (stopice.net, antifreeze.app, iceout.org, Telegram-каналы) рядом с вами — в Telegram
 url: https://github.com/0xc000x/ha-reports-tg-addon
@@ -40,6 +40,7 @@ schema:
   stopice_api_key: password
   telegram_bot_token: password
   telegram_chat_id: str
+  telegram_topic_id: int?
   locations:
     - name: str
       latitude: float

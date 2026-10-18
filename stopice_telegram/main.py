@@ -21,7 +21,7 @@ except Exception:
     PACIFIC = None
 LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.8.0"
+VERSION = "1.8.1"
 USER_AGENT = f"ICE-Monitor-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -356,8 +356,16 @@ def telegram(cfg, method, **params):
         raise RuntimeError(f"Telegram {method}: {e.code} {e.read().decode('utf-8', 'replace')}") from None
 
 
+def destination(cfg):
+    """Чат и, если задан, топик группы, куда идут все сообщения бота."""
+    params = {"chat_id": cfg["telegram_chat_id"]}
+    if cfg.get("telegram_topic_id"):
+        params["message_thread_id"] = int(cfg["telegram_topic_id"])
+    return params
+
+
 def send_text(cfg, text):
-    telegram(cfg, "sendMessage", chat_id=cfg["telegram_chat_id"], text=text[:4096],
+    telegram(cfg, "sendMessage", **destination(cfg), text=text[:4096],
              parse_mode="HTML", disable_web_page_preview="true")
 
 
@@ -366,7 +374,7 @@ def send_alert(cfg, alert, loc=None):
     photo = alert.get("photo")
     if photo and len(text) <= 1024:
         try:
-            telegram(cfg, "sendPhoto", chat_id=cfg["telegram_chat_id"], photo=photo,
+            telegram(cfg, "sendPhoto", **destination(cfg), photo=photo,
                      caption=text, parse_mode="HTML")
             return
         except Exception as e:
