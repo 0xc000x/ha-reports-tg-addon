@@ -47,7 +47,8 @@ info.onAdd = () => {
   div.innerHTML = '<b id="title">Репорты за сегодня</b>'
     + '<div id="count" class="muted">загрузка…</div>'
     + '<div><span class="dot" style="background:#ef4444"></span>stopice.net</div>'
-    + '<div><span class="dot" style="background:#a855f7"></span>iceout / antifreeze</div>';
+    + '<div><span class="dot" style="background:#a855f7"></span>iceout / antifreeze</div>'
+    + '<div><span class="dot" style="background:#0ea5e9"></span>Telegram</div>';
   return div;
 };
 info.addTo(map);
@@ -93,7 +94,8 @@ async function loadReports() {
       const lat = +r.lat, lon = +r.long;
       if (!isFinite(lat) || !isFinite(lon)) continue;
       n++;
-      const color = r.source === "stopice.net" ? "#ef4444" : "#a855f7";
+      const color = r.source === "stopice.net" ? "#ef4444"
+        : String(r.source || "").startsWith("t.me/") ? "#0ea5e9" : "#a855f7";
       const m = L.circleMarker([lat, lon], { radius: 6, color: "#fff", weight: 1.5, fillColor: color, fillOpacity: 0.95 });
       const box = el("div", "popup");
       box.append(el("b", "", r.status || ""), el("div", "", r.address || ""), el("div", "muted", r.created || ""));

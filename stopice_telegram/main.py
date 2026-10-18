@@ -1,4 +1,4 @@
-"""ICE Monitor: опрашивает источники репортов об ICE (stopice.net, antifreeze.app) и шлёт новые в Telegram."""
+"""ICE Monitor: опрашивает источники репортов об ICE (stopice.net, antifreeze.app, Telegram-каналы) и шлёт новые в Telegram."""
 import html
 import json
 import math
@@ -21,7 +21,7 @@ except Exception:
     PACIFIC = None
 LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 USER_AGENT = f"ICE-Monitor-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -29,6 +29,7 @@ STATE_FILE = (Path("/data") if OPTIONS_FILE.exists() else HERE) / "seen.json"
 MAX_SEEN = 5000
 REQUEST_GAP = 5  # пауза между запросами к stopice, иначе срабатывает rate limit
 ANTIFREEZE_URL = "https://antifreeze.app/api/sightings"
+DEFAULT_TG_CHANNELS = ["icetracking"]
 WEB_PORT = 8099  # Ingress: карта точек в интерфейсе Home Assistant
 CHANGELOG_FILE = HERE / "CHANGELOG.md"
 MAX_RECENT = 300  # сколько последних репортов показывать на карте
@@ -238,6 +239,86 @@ def normalize_antifreeze(s, notes):
     }
 
 
+# --- публичные Telegram-каналы (веб-версия t.me/s/<канал>) ---------------------
+
+TG_STATUSES = {
+    "verified report": "🔴 ПОДТВЕРЖДЕНО",
+    "unconfirmed report": "🟡 НЕ ПОДТВЕРЖДЕНО",
+    "ice sighting": "🟠 ЗАМЕЧЕНО",
+}
+TG_FIELD = r"^{label}:[ \t]*(.*?)(?=^(?:Posted|Location|Description|Public comments):|\Z)"
+
+
+def tg_field(text, label):
+    m = re.search(TG_FIELD.format(label=label), text, re.M | re.S)
+    return m.group(1).strip() if m else ""
+
+
+def fetch_telegram_channel(channel):
+    """Последние посты публичного канала из его открытой веб-версии (без аккаунта Telegram)."""
+    channel = channel.strip().lstrip("@").replace("https://t.me/", "").strip("/")
+    page = http(f"https://t.me/s/{urllib.parse.quote(channel)}")
+    reports = []
+    for block in page.split('class="tgme_widget_message_wrap')[1:]:
+        post = re.search(r'data-post="([^"]+)"', block)
+        body = re.search(r'js-message_text"[^>]*>(.*?)</div>', block, re.S)
+        if not post or not body:
+            continue
+        text = html.unescape(re.sub(r"<[^>]+>", "", re.sub(r"<br\s*/?>", "\n", body.group(1))))
+        report = parse_telegram_report(text)
+        if not report:
+            continue
+        photo = re.search(r"tgme_widget_message_photo_wrap[^>]*background-image:url\('([^']+)'\)", block)
+        tg_time = re.search(r'<time datetime="([^"]+)"', block)
+        report.update({
+            "uid": f"tg:{post.group(1)}",
+            "id": post.group(1),
+            "source": f"t.me/{channel}",
+            "url": f"https://t.me/{post.group(1)}",
+            "photo": photo.group(1) if photo else None,
+        })
+        if report["ts"] is None and tg_time:
+            report["ts"] = parse_iso_time(tg_time.group(1))
+        reports.append(report)
+    reports.reverse()  # свежие первыми, как у остальных источников
+    return reports
+
+
+def parse_telegram_report(text):
+    """Пост вида «Verified Report / Posted: … / Location: адрес (lat, lon) / Description: …»."""
+    english = re.split(r"\n\s*(?:Подтверждённое|Неподтверждённое|Сообщение)", text)[0]
+    location = tg_field(english, "Location")
+    coords = re.search(r"\((-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\)\s*$", location)
+    if not coords:
+        return None
+    kind = english.strip().split("\n")[0].strip()
+    posted = tg_field(english, "Posted")
+    description = tg_field(english, "Description")
+    comments = tg_field(english, "Public comments")
+    if comments and comments.lower() != "none":
+        description += f"\n\nКомментарии: {comments}"
+    return {
+        "status": TG_STATUSES.get(kind.lower(), f"📢 {kind.upper()}"),
+        "address": re.sub(r",?\s*USA\s*$", "", location[: coords.start()].strip()),
+        "created": posted.split(" (")[0] if posted else "",
+        "ts": parse_posted_time(posted),
+        "description": description.strip(),
+        "moderator_notes": "",
+        "lat": coords.group(1),
+        "long": coords.group(2),
+    }
+
+
+def parse_posted_time(value):
+    """'10/17/2026 10:32 AM PDT (1:32 PM EDT)' -> unix-время."""
+    m = re.match(r"(\d+/\d+/\d+ \d+:\d+ [AP]M) (P[DS]T)", str(value or ""))
+    if not m:
+        return None
+    offset = -7 if m.group(2) == "PDT" else -8
+    dt = datetime.strptime(m.group(1), "%m/%d/%Y %I:%M %p")
+    return dt.replace(tzinfo=timezone(timedelta(hours=offset))).timestamp()
+
+
 # --- Telegram ----------------------------------------------------------------
 
 def format_alert(alert, loc=None):
@@ -305,12 +386,41 @@ def load_state():
     state.setdefault("seen", [])
     state.setdefault("locations", [])
     state.setdefault("af_locations", [])
+    state.setdefault("tg_locations", [])
+    state.setdefault("sent_geo", [])
     return state
 
 
 def save_state(state):
     state["seen"] = state["seen"][-MAX_SEEN:]
     STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
+
+
+DUPLICATE_MILES = 0.25  # один и тот же репорт из разных источников: рядом по месту…
+DUPLICATE_SECONDS = 3 * 3600  # …и по времени
+
+
+def find_duplicate(state, alert):
+    """Уже отправленный репорт из другого источника о том же месте и времени."""
+    try:
+        lat, lon, ts = float(alert["lat"]), float(alert["long"]), float(alert["ts"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    for sent in state["sent_geo"]:
+        if sent["source"] == alert["source"] or abs(sent["ts"] - ts) > DUPLICATE_SECONDS:
+            continue
+        if miles_between(lat, lon, sent["lat"], sent["lon"]) <= DUPLICATE_MILES:
+            return sent
+    return None
+
+
+def record_sent(state, alert):
+    try:
+        state["sent_geo"].append({"lat": float(alert["lat"]), "lon": float(alert["long"]),
+                                  "ts": float(alert["ts"]), "source": alert["source"]})
+    except (KeyError, TypeError, ValueError):
+        return
+    state["sent_geo"] = state["sent_geo"][-500:]
 
 
 def process(cfg, state, loc, alerts, known_key):
@@ -321,16 +431,23 @@ def process(cfg, state, loc, alerts, known_key):
     new = [a for a in alerts if a["uid"] not in seen]
     if key not in state[known_key]:
         state["seen"] += [a["uid"] for a in new]
+        for alert in new:  # чтобы копии этих репортов из других источников тоже считались дублями
+            record_sent(state, alert)
         state[known_key].append(key)
         save_state(state)
         if new:
             log(f"{name}: новая точка, молча запомнил {len(new)} репортов ({alerts[0]['source'].split()[0]})")
         return
     for alert in reversed(new):  # отправляем от старых к новым
-        send_alert(cfg, alert, loc)
+        duplicate = find_duplicate(state, alert)
+        if duplicate:
+            log(f"{name}: {alert['uid']} — дубль репорта из {duplicate['source']}, пропускаю")
+        else:
+            send_alert(cfg, alert, loc)
+            record_sent(state, alert)
+            log(f"{name}: отправлен репорт {alert['uid']}: {alert.get('address')}")
         state["seen"].append(alert["uid"])
         save_state(state)
-        log(f"{name}: отправлен репорт {alert['uid']}: {alert.get('address')}")
 
 
 def remember(recent, alerts):
@@ -371,6 +488,24 @@ def poll_once(cfg, state, locations, recent):
         except Exception as e:
             counts.append("antifreeze: ошибка")
             log(f"antifreeze: ошибка: {e}")
+
+    channels = cfg.get("telegram_channels")
+    for channel in (DEFAULT_TG_CHANNELS if channels is None else channels):
+        try:
+            reports = fetch_telegram_channel(channel)
+            matched = 0
+            for loc in locations:
+                near = [r for r in reports
+                        if (d := distance_to(loc, r)) is not None and d <= float(loc["distance_miles"])]
+                matched += len(near)
+                remember(recent, reversed(near))
+                # у каждого канала свой список «известных» точек, чтобы новый канал не прислал старое
+                state.setdefault(f"tg_locations:{channel}", [])
+                process(cfg, state, loc, near, f"tg_locations:{channel}")
+            counts.append(f"t.me/{channel}: {matched} в зонах из {len(reports)}")
+        except Exception as e:
+            counts.append(f"t.me/{channel}: ошибка")
+            log(f"t.me/{channel}: ошибка: {e}")
     return counts
 
 

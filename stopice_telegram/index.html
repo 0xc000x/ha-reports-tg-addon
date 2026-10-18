@@ -83,6 +83,7 @@
       Репорты за последнее время:
       <span class="dot" style="background:#ef4444"></span>stopice
       <span class="dot" style="background:#a855f7"></span>iceout / antifreeze
+      <span class="dot" style="background:#0ea5e9"></span>Telegram
     </div>
     <div class="editor" id="editor" hidden>
       <div>
@@ -334,7 +335,8 @@ async function loadReports() {
     for (const r of data.reports) {
       const lat = +r.lat, lon = +r.long;
       if (!isFinite(lat) || !isFinite(lon)) continue;
-      const color = r.source === "stopice.net" ? "#ef4444" : "#a855f7";
+      const color = r.source === "stopice.net" ? "#ef4444"
+        : String(r.source || "").startsWith("t.me/") ? "#0ea5e9" : "#a855f7";
       const m = L.circleMarker([lat, lon], { radius: 5, color, weight: 1, fillColor: color, fillOpacity: 0.8 });
       const box = document.createElement("div");
       const b = document.createElement("b");
