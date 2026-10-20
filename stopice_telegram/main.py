@@ -22,7 +22,7 @@ except Exception:
     PACIFIC = None
 LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.8.5"
+VERSION = "1.8.6"
 USER_AGENT = f"ICE-Monitor-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -34,6 +34,8 @@ DEFAULT_TG_CHANNELS = ["icetracking"]
 WEB_PORT = 8099  # Ingress: карта точек в интерфейсе Home Assistant
 CHANGELOG_FILE = HERE / "CHANGELOG.md"
 MAX_RECENT = 300  # сколько последних репортов показывать на карте
+RECENT_FILE = STATE_FILE.with_name("recent.json")  # они же на диске, чтобы карта не пустела после перезапуска
+RECENT_KEEP_SECONDS = 36 * 3600
 
 PRIORITIES = {
     "1": "🔴 ПОДТВЕРЖДЕНО",
@@ -423,6 +425,27 @@ def send_alert(cfg, alert, loc=None):
 
 # --- состояние и цикл ----------------------------------------------------------
 
+def load_recent():
+    recent = OrderedDict()
+    try:
+        items = json.loads(RECENT_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return recent
+    cutoff = time.time() - RECENT_KEEP_SECONDS
+    for item in items:
+        if isinstance(item, dict) and item.get("uid") and (item.get("ts") or 0) >= cutoff:
+            recent[item["uid"]] = item
+    return recent
+
+
+def save_recent(recent):
+    cutoff = time.time() - RECENT_KEEP_SECONDS
+    items = [r for r in recent.values() if (r.get("ts") or 0) >= cutoff]
+    tmp = RECENT_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(RECENT_FILE)
+
+
 def load_state():
     try:
         state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
@@ -631,7 +654,7 @@ def main():
     runtime = {
         "cfg": cfg,
         "options": json.loads(OPTIONS_FILE.read_text(encoding="utf-8")) if OPTIONS_FILE.exists() else {},
-        "recent": OrderedDict(),
+        "recent": load_recent(),
         "user_agent": USER_AGENT,
         "tz": LOCAL_TZ,
     }
@@ -669,6 +692,10 @@ def main():
         cycle_start = time.monotonic()
         locations = cfg["locations"]  # могли поменяться через карту
         counts = poll_once(cfg, state, locations, runtime["recent"])
+        try:
+            save_recent(runtime["recent"])
+        except OSError as e:
+            log(f"Не удалось сохранить репорты для карты: {e}")
         try:
             import web
             if web.publish_public(runtime, state, bool(cfg.get("public_page")), log):

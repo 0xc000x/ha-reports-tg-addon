@@ -45,6 +45,10 @@
   .item .name { font-weight: 600; }
   .item .meta { color: var(--muted); font-size: 12px; }
   .editor { padding: 12px 16px; border-top: 1px solid var(--border); display: grid; gap: 8px; }
+  .rm {
+    width: 22px; height: 22px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
+    color: #fff; font: 700 12px/22px system-ui, sans-serif; text-align: center; cursor: pointer;
+  }
   .editor[hidden] { display: none; }
   .editor label { font-size: 12px; color: var(--muted); }
   .row { display: flex; gap: 8px; align-items: center; }
@@ -330,29 +334,57 @@ $("searchForm").addEventListener("submit", async (e) => {
 window.addEventListener("resize", () => map.invalidateSize());
 window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
 
+// Один и тот же случай часто приходит из нескольких источников с теми же координатами:
+// такие репорты (до 400 м и 3 часов друг от друга) показываем одной точкой с числом.
+function sourceColor(source) {
+  if (source === "stopice.net") return "#ef4444";
+  if (String(source || "").startsWith("t.me/")) return "#0ea5e9";
+  return "#a855f7";
+}
+
+function groupReports(list) {
+  const groups = [];
+  const sorted = (list || []).slice().sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  for (const r of sorted) {
+    const lat = +r.lat, lon = +r.long;
+    if (!isFinite(lat) || !isFinite(lon)) continue;
+    const g = groups.find((g) => map.distance([g.lat, g.lon], [lat, lon]) <= 400
+      && Math.abs((r.ts || 0) - (g.ts || 0)) <= 3 * 3600);
+    if (g) { g.items.push(r); g.ts = r.ts || g.ts; } else groups.push({ lat, lon, ts: r.ts || 0, items: [r] });
+  }
+  return groups;
+}
+
+function reportMarker(group, popup) {
+  const newest = group.items[group.items.length - 1];
+  const n = group.items.length;
+  const icon = L.divIcon({
+    className: "",
+    html: `<div class="rm" style="background:${sourceColor(newest.source)}">${n > 1 ? n : ""}</div>`,
+    iconSize: [26, 26], iconAnchor: [13, 13], popupAnchor: [0, -12],
+  });
+  const m = L.marker([group.lat, group.lon], { icon, pane: "reports", bubblingMouseEvents: false });
+  m.bindPopup(popup, { maxWidth: 300, maxHeight: 340 });
+  return m;
+}
+
 async function loadReports() {
   try {
     const data = await (await fetch("api/reports")).json();
     reportLayer.clearLayers();
-    for (const r of data.reports) {
-      const lat = +r.lat, lon = +r.long;
-      if (!isFinite(lat) || !isFinite(lon)) continue;
-      const color = r.source === "stopice.net" ? "#ef4444"
-        : String(r.source || "").startsWith("t.me/") ? "#0ea5e9" : "#a855f7";
-      const m = L.circleMarker([lat, lon], {
-        radius: 12, color: "#fff", weight: 2, fillColor: color, fillOpacity: 0.95,
-        pane: "reports", bubblingMouseEvents: false,
-      });
+    for (const group of groupReports(data.reports)) {
       const box = document.createElement("div");
-      const b = document.createElement("b");
-      b.textContent = r.status || "";
-      const addr = document.createElement("div");
-      addr.textContent = r.address || "";
-      const time = document.createElement("div");
-      time.textContent = r.created || "";
-      box.append(b, addr, time);
-      m.bindPopup(box);
-      reportLayer.addLayer(m);
+      group.items.slice().reverse().forEach((r, i) => {
+        if (i) box.append(document.createElement("hr"));
+        const b = document.createElement("b");
+        b.textContent = r.status || "";
+        const addr = document.createElement("div");
+        addr.textContent = r.address || "";
+        const time = document.createElement("div");
+        time.textContent = `${r.created || ""} · ${r.source || ""}`;
+        box.append(b, addr, time);
+      });
+      reportLayer.addLayer(reportMarker(group, box));
     }
   } catch (err) { /* репорты на карте — необязательная часть */ }
 }

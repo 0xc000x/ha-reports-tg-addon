@@ -21,7 +21,13 @@
   .info b { display: block; margin-bottom: 2px; }
   .info .muted { color: var(--muted); }
   .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  .rm {
+    width: 22px; height: 22px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
+    color: #fff; font: 700 12px/22px system-ui, sans-serif; text-align: center; cursor: pointer;
+  }
   .popup b { display: block; margin-bottom: 4px; }
+  .popup hr { border: 0; border-top: 1px solid #e5e7eb; margin: 8px 0; }
+  .popup .src { color: #6b7280; font-size: 12px; margin-top: 4px; }
   .popup .desc { margin-top: 6px; max-width: 260px; white-space: pre-line; }
   .popup .muted { color: #6b7280; }
 </style>
@@ -62,6 +68,40 @@ async function getJSON(apiPath) {
   return resp.json();
 }
 
+// Один и тот же случай часто приходит из нескольких источников с теми же координатами:
+// такие репорты (до 400 м и 3 часов друг от друга) показываем одной точкой с числом.
+function sourceColor(source) {
+  if (source === "stopice.net") return "#ef4444";
+  if (String(source || "").startsWith("t.me/")) return "#0ea5e9";
+  return "#a855f7";
+}
+
+function groupReports(list) {
+  const groups = [];
+  const sorted = (list || []).slice().sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  for (const r of sorted) {
+    const lat = +r.lat, lon = +r.long;
+    if (!isFinite(lat) || !isFinite(lon)) continue;
+    const g = groups.find((g) => map.distance([g.lat, g.lon], [lat, lon]) <= 400
+      && Math.abs((r.ts || 0) - (g.ts || 0)) <= 3 * 3600);
+    if (g) { g.items.push(r); g.ts = r.ts || g.ts; } else groups.push({ lat, lon, ts: r.ts || 0, items: [r] });
+  }
+  return groups;
+}
+
+function reportMarker(group, popup) {
+  const newest = group.items[group.items.length - 1];
+  const n = group.items.length;
+  const icon = L.divIcon({
+    className: "",
+    html: `<div class="rm" style="background:${sourceColor(newest.source)}">${n > 1 ? n : ""}</div>`,
+    iconSize: [26, 26], iconAnchor: [13, 13], popupAnchor: [0, -12],
+  });
+  const m = L.marker([group.lat, group.lon], { icon, pane: "reports", bubblingMouseEvents: false });
+  m.bindPopup(popup, { maxWidth: 300, maxHeight: 340 });
+  return m;
+}
+
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -91,26 +131,22 @@ async function loadReports() {
     const data = await getJSON("api/reports?today=1");
     reportLayer.clearLayers();
     let n = 0;
-    for (const r of data.reports || []) {
-      const lat = +r.lat, lon = +r.long;
-      if (!isFinite(lat) || !isFinite(lon)) continue;
-      n++;
-      const color = r.source === "stopice.net" ? "#ef4444"
-        : String(r.source || "").startsWith("t.me/") ? "#0ea5e9" : "#a855f7";
-      const m = L.circleMarker([lat, lon], {
-        radius: 12, color: "#fff", weight: 2, fillColor: color, fillOpacity: 0.95,
-        pane: "reports", bubblingMouseEvents: false,
-      });
+    for (const group of groupReports(data.reports)) {
+      n += group.items.length;
       const box = el("div", "popup");
-      box.append(el("b", "", r.status || ""), el("div", "", r.address || ""), el("div", "muted", r.created || ""));
-      if (r.description) box.append(el("div", "desc", r.description));
-      if (r.url) {
-        const a = el("a", "", "Открыть репорт");
-        a.href = r.url; a.target = "_blank"; a.rel = "noopener";
-        box.append(el("div"), a);
-      }
-      m.bindPopup(box);
-      reportLayer.addLayer(m);
+      group.items.slice().reverse().forEach((r, i) => {
+        if (i) box.append(el("hr"));
+        box.append(el("b", "", r.status || ""), el("div", "", r.address || ""), el("div", "muted", r.created || ""));
+        if (r.description) box.append(el("div", "desc", r.description));
+        const src = el("div", "src", r.source || "");
+        if (r.url) {
+          const a = el("a", "", "открыть");
+          a.href = r.url; a.target = "_blank"; a.rel = "noopener";
+          src.append(" · ", a);
+        }
+        box.append(src);
+      });
+      reportLayer.addLayer(reportMarker(group, box));
     }
     const today = new Date().toLocaleDateString("ru-RU", { day: "numeric", month: "long", timeZone: "America/Los_Angeles" });
     document.getElementById("title").textContent = `Репорты за ${today}`;
