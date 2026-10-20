@@ -22,7 +22,7 @@ except Exception:
     PACIFIC = None
 LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.8.2"
+VERSION = "1.8.3"
 USER_AGENT = f"ICE-Monitor-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -244,9 +244,12 @@ def normalize_antifreeze(s, notes):
 
 TG_STATUSES = {
     "verified report": "🔴 ПОДТВЕРЖДЕНО",
+    "urgent confirmed ice report": "🚨 СРОЧНО: ПОДТВЕРЖДЕНО",
     "unconfirmed report": "🟡 НЕ ПОДТВЕРЖДЕНО",
     "ice sighting": "🟠 ЗАМЕЧЕНО",
 }
+NO_COMMENTS = {"", "none", "нет", "n/a", "-"}
+CONFIRMED_BY = re.compile(r"\bconfirmed(?: post)? by\s+(?!a community partner\b)([^.,;:!\n]{2,60})", re.I)
 TG_FIELD = r"^{label}:[ \t]*(.*?)(?=^(?:Posted|Location|Description|Public comments):|\Z)"
 
 
@@ -287,7 +290,11 @@ def fetch_telegram_channel(channel):
 
 def parse_telegram_report(text):
     """Пост вида «Verified Report / Posted: … / Location: адрес (lat, lon) / Description: …»."""
-    english = re.split(r"\n\s*(?:Подтверждённое|Неподтверждённое|Сообщение)", text)[0]
+    # пост продублирован по-русски: берём только английскую часть до русского заголовка
+    english = text.split("\nВыложено:")[0].rstrip()
+    paragraphs = english.split("\n\n")
+    if len(paragraphs) > 1 and re.search("[а-яё]", paragraphs[-1], re.I):
+        english = "\n\n".join(paragraphs[:-1])
     location = tg_field(english, "Location")
     coords = re.search(r"\((-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\)\s*$", location)
     if not coords:
@@ -296,10 +303,17 @@ def parse_telegram_report(text):
     posted = tg_field(english, "Posted")
     description = tg_field(english, "Description")
     comments = tg_field(english, "Public comments")
-    if comments and comments.lower() != "none":
+    if comments.strip().lower() not in NO_COMMENTS:
         description += f"\n\nКомментарии: {comments}"
+    status = TG_STATUSES.get(kind.lower(), f"📢 {kind.upper()}")
+    if kind.lower() == "confirmed by a community partner":
+        # «Confirmed post by NorCal Resist» в описании -> «CONFIRMED BY NorCal Resist» в заголовке
+        org = CONFIRMED_BY.search(description)
+        status = f"📢 CONFIRMED BY {org.group(1).strip()}" if org else "📢 CONFIRMED BY A COMMUNITY PARTNER"
+        if org and re.fullmatch(r"\W*" + re.escape(org.group(0)) + r"\W*", description, re.I):
+            description = ""  # описание целиком повторяет заголовок
     return {
-        "status": TG_STATUSES.get(kind.lower(), f"📢 {kind.upper()}"),
+        "status": status,
         "address": re.sub(r",?\s*USA\s*$", "", location[: coords.start()].strip()),
         "created": posted.split(" (")[0] if posted else "",
         "ts": parse_posted_time(posted),
@@ -329,12 +343,6 @@ def format_alert(alert, loc=None):
         f"📍 {esc(alert.get('address'))}",
         f"🕒 {esc(alert.get('created'))}",
     ]
-    if loc:
-        place = f"📌 {esc(loc.get('name') or 'Точка')}"
-        dist = distance_to(loc, alert)
-        if dist is not None:
-            place += f" — {dist:.1f} mi"
-        lines.append(place)
     if alert.get("description"):
         lines += ["", esc(alert["description"])]
     if alert.get("moderator_notes"):

@@ -72,9 +72,8 @@ async function loadZones(fit) {
   zoneLayer.clearLayers();
   for (const loc of data.locations || []) {
     const c = L.circle([loc.latitude, loc.longitude], {
-      radius: loc.distance_miles * MILE, color: "#2563eb", weight: 1.5, fillOpacity: 0.07, interactive: true,
+      radius: loc.distance_miles * MILE, color: "#2563eb", weight: 1.5, fillOpacity: 0.07, interactive: false,
     });
-    c.bindTooltip(`${loc.name} — ${loc.distance_miles} mi`, { sticky: true });
     zoneLayer.addLayer(c);
   }
   if (fit && zoneLayer.getLayers().length) {
