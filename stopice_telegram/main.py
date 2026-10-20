@@ -22,7 +22,7 @@ except Exception:
     PACIFIC = None
 LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.8.3"
+VERSION = "1.8.4"
 USER_AGENT = f"ICE-Monitor-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -305,7 +305,7 @@ def parse_telegram_report(text):
     comments = tg_field(english, "Public comments")
     if comments.strip().lower() not in NO_COMMENTS:
         description += f"\n\nКомментарии: {comments}"
-    status = TG_STATUSES.get(kind.lower(), f"📢 {kind.upper()}")
+    status = TG_STATUSES.get(kind.lower(), f"{'🚨' if 'urgent' in kind.lower() else '📢'} {kind.upper()}")
     if kind.lower() == "confirmed by a community partner":
         # «Confirmed post by NorCal Resist» в описании -> «CONFIRMED BY NorCal Resist» в заголовке
         org = CONFIRMED_BY.search(description)
@@ -447,14 +447,23 @@ DUPLICATE_MILES = 0.25  # один и тот же репорт из разных
 DUPLICATE_SECONDS = 3 * 3600  # …и по времени
 
 
+def is_urgent(alert):
+    return "🚨" in str(alert.get("status") or "") or "urgent" in str(alert.get("status") or "").lower()
+
+
 def find_duplicate(state, alert):
-    """Уже отправленный репорт из другого источника о том же месте и времени."""
+    """Уже отправленный репорт из другого источника о том же месте и времени.
+
+    Срочный (URGENT) репорт дублем обычного не считается: он важнее и приходит снова."""
+    urgent = is_urgent(alert)
     try:
         lat, lon, ts = float(alert["lat"]), float(alert["long"]), float(alert["ts"])
     except (KeyError, TypeError, ValueError):
         return None
     for sent in state["sent_geo"]:
         if sent["source"] == alert["source"] or abs(sent["ts"] - ts) > DUPLICATE_SECONDS:
+            continue
+        if urgent and not sent.get("urgent"):
             continue
         if miles_between(lat, lon, sent["lat"], sent["lon"]) <= DUPLICATE_MILES:
             return sent
@@ -464,7 +473,8 @@ def find_duplicate(state, alert):
 def record_sent(state, alert):
     try:
         state["sent_geo"].append({"lat": float(alert["lat"]), "lon": float(alert["long"]),
-                                  "ts": float(alert["ts"]), "source": alert["source"]})
+                                  "ts": float(alert["ts"]), "source": alert["source"],
+                                  "urgent": is_urgent(alert)})
     except (KeyError, TypeError, ValueError):
         return
     state["sent_geo"] = state["sent_geo"][-500:]
