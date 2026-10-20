@@ -21,6 +21,11 @@
   .info b { display: block; margin-bottom: 2px; }
   .info .muted { color: var(--muted); }
   .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  .me-dot {
+    width: 14px; height: 14px; border-radius: 50%; background: #22c55e; border: 2px solid #fff;
+    box-shadow: 0 0 0 4px rgba(34, 197, 94, .35), 0 1px 4px rgba(0, 0, 0, .5);
+  }
+  .locate-btn { font-size: 18px; line-height: 30px !important; text-align: center; text-decoration: none; }
   .rm {
     width: 22px; height: 22px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
     color: #fff; font: 700 12px/22px system-ui, sans-serif; text-align: center; cursor: pointer;
@@ -154,6 +159,59 @@ async function loadReports() {
   } catch (err) {
     document.getElementById("count").textContent = "не удалось загрузить";
   }
+}
+
+// --- метка своего устройства: координаты берёт браузер и никуда их не отправляет ---
+map.createPane("me").style.zIndex = 640;  // под репортами, чтобы не мешать нажимать на них
+let meMarker = null, meAccuracy = null, meLatLng = null, centerOnFix = false;
+
+const locateControl = L.control({ position: "topleft" });
+locateControl.onAdd = () => {
+  const bar = L.DomUtil.create("div", "leaflet-bar");
+  const btn = L.DomUtil.create("a", "locate-btn", bar);
+  btn.href = "#"; btn.title = "Где я"; btn.setAttribute("role", "button"); btn.textContent = "◎";
+  L.DomEvent.on(btn, "click", (e) => {
+    L.DomEvent.stop(e);
+    if (meLatLng) map.setView(meLatLng, Math.max(map.getZoom(), 13));
+    else { centerOnFix = true; startLocating(); }
+  });
+  return bar;
+};
+
+function startLocating() {
+  if (!navigator.geolocation) return;
+  map.locate({ watch: true, enableHighAccuracy: true, setView: false });
+}
+
+map.on("locationfound", (e) => {
+  meLatLng = e.latlng;
+  if (!meMarker) {
+    meAccuracy = L.circle(e.latlng, { radius: e.accuracy, pane: "me", interactive: false,
+      color: "#22c55e", weight: 1, fillColor: "#22c55e", fillOpacity: 0.12 }).addTo(map);
+    meMarker = L.marker(e.latlng, { pane: "me", interactive: false, keyboard: false,
+      icon: L.divIcon({ className: "", html: '<div class="me-dot"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }) }).addTo(map);
+  } else {
+    meMarker.setLatLng(e.latlng);
+    meAccuracy.setLatLng(e.latlng).setRadius(e.accuracy);
+  }
+  const btn = document.querySelector(".locate-btn");
+  if (btn) { btn.title = "Где я"; btn.style.opacity = ""; }
+  if (centerOnFix) { centerOnFix = false; map.setView(e.latlng, Math.max(map.getZoom(), 13)); }
+});
+
+map.on("locationerror", () => {
+  // нет разрешения: метку не показываем, кнопка остаётся для повторной попытки
+  centerOnFix = false;
+  const btn = document.querySelector(".locate-btn");
+  if (btn && !meLatLng) {
+    btn.title = "Нет доступа к геопозиции — разрешите её для этого сайта и нажмите снова";
+    btn.style.opacity = "0.5";
+  }
+});
+
+if (window.isSecureContext && navigator.geolocation) {
+  locateControl.addTo(map);
+  startLocating();
 }
 
 window.addEventListener("resize", () => map.invalidateSize());
