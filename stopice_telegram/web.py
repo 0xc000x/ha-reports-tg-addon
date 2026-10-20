@@ -88,6 +88,19 @@ def today_reports(runtime):
     return [r for r in runtime["recent"].values() if r.get("ts") and start <= r["ts"] < end]
 
 
+PUBLIC_LOADER = """<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ICE Monitor — карта</title></head>
+<body style="margin:0;font:14px system-ui,sans-serif">
+<script>
+fetch("page.html?t=" + Date.now(), { cache: "no-store" })
+  .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
+  .then(function (html) { document.open(); document.write(html); document.close(); })
+  .catch(function () { document.body.textContent = "Карта временно недоступна"; });
+</script>
+</body></html>
+"""
 PUBLIC_ROOT = Path("/homeassistant/www")  # отдаётся Home Assistant без входа по адресу /local/...
 
 
@@ -108,7 +121,11 @@ def publish_public(runtime, state, enabled, log):
     folder = PUBLIC_ROOT / f"stopice_{token}"
     folder.mkdir(parents=True, exist_ok=True)
     page = VIEW.read_text(encoding="utf-8").replace("const DATA_FILE = null;", 'const DATA_FILE = "data.json";')
-    (folder / "index.html").write_text(page, encoding="utf-8")
+    (folder / "page.html").write_text(page, encoding="utf-8")
+    # Home Assistant отдаёт /local с кэшем на месяц, поэтому index.html — неизменный загрузчик,
+    # который всегда берёт свежую page.html; сама карта обновляется вместе с add-on'ом.
+    if not (folder / "index.html").exists() or (folder / "index.html").read_text(encoding="utf-8") != PUBLIC_LOADER:
+        (folder / "index.html").write_text(PUBLIC_LOADER, encoding="utf-8")
     data = {"locations": runtime["cfg"]["locations"], "reports": today_reports(runtime),
             "generated": datetime.now(runtime.get("tz")).isoformat()}
     tmp = folder / "data.json.tmp"

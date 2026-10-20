@@ -39,6 +39,8 @@ L.tileLayer(DATA_FILE ? "https://tile.openstreetmap.org/{z}/{x}/{y}.png" : "tile
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>',
 }).addTo(map);
 const zoneLayer = L.featureGroup().addTo(map);
+// репорты в отдельном слое поверх зон, чтобы на них можно было нажать
+map.createPane("reports").style.zIndex = 650;
 const reportLayer = L.layerGroup().addTo(map);
 
 const info = L.control({ position: "topright" });
@@ -95,7 +97,10 @@ async function loadReports() {
       n++;
       const color = r.source === "stopice.net" ? "#ef4444"
         : String(r.source || "").startsWith("t.me/") ? "#0ea5e9" : "#a855f7";
-      const m = L.circleMarker([lat, lon], { radius: 6, color: "#fff", weight: 1.5, fillColor: color, fillOpacity: 0.95 });
+      const m = L.circleMarker([lat, lon], {
+        radius: 12, color: "#fff", weight: 2, fillColor: color, fillOpacity: 0.95,
+        pane: "reports", bubblingMouseEvents: false,
+      });
       const box = el("div", "popup");
       box.append(el("b", "", r.status || ""), el("div", "", r.address || ""), el("div", "muted", r.created || ""));
       if (r.description) box.append(el("div", "desc", r.description));
