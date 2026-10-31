@@ -12,6 +12,8 @@ import urllib.request
 
 API = "http://supervisor/core/api"
 RADIUS_MILES = 15
+SPOKEN_LEVEL = 1  # на этом уровне телефон ещё и проговаривает тревогу через громкость будильника
+SPOKEN_TEXT = "Внимание! Шакалы в радиусе одной мили"
 LEVELS = [  # (миль, заголовок)
     (1, "ПИЗДЕЦ! Шакалы в радиусе 1 мили"),
     (3, "ОСТОРОЖНО! Шакалы в радиусе 3 миль"),
@@ -145,6 +147,14 @@ class GeoAlerts:
                 except Exception as e:
                     self.log(f"Уведомления: не удалось отправить {service}: {e}")
                     continue
+                if radius <= SPOKEN_LEVEL:
+                    # обычное уведомление на Samsung и др. не всегда пробивает беззвучный режим,
+                    # а голос через поток будильника — пробивает (если будильники разрешены в «Не беспокоить»)
+                    try:
+                        notify(service, "", "TTS", {"tts_text": SPOKEN_TEXT, "media_stream": "alarm_stream_max",
+                                                    "ttl": 0, "priority": "high"})
+                    except Exception as e:
+                        self.log(f"Уведомления: голосовая тревога на {service} не отправилась: {e}")
                 alerted = [a for a in alerted if a not in same]
                 alerted.append({"lat": rlat, "lon": rlon, "ts": rts, "level": radius})
                 self.log(f"Уведомление {name}: {title} — {r.get('address')} ({miles:.1f} mi)")
