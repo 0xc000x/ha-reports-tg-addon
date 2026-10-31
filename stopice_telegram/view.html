@@ -26,6 +26,11 @@
     box-shadow: 0 0 0 4px rgba(34, 197, 94, .35), 0 1px 4px rgba(0, 0, 0, .5);
   }
   .locate-btn { font-size: 18px; line-height: 30px !important; text-align: center; text-decoration: none; }
+  .person {
+    width: 30px; height: 30px; border-radius: 50%; border: 2px solid #22c55e; overflow: hidden; background: #334155;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .5); color: #fff; font: 700 12px/30px system-ui, sans-serif; text-align: center;
+  }
+  .person img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .rm {
     width: 22px; height: 22px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
     color: #fff; font: 700 12px/22px system-ui, sans-serif; text-align: center; cursor: pointer;
@@ -43,6 +48,8 @@
 const MILE = 1609.344;
 // Публичная копия страницы (папка /local Home Assistant) берёт данные из data.json, а не из API add-on'а.
 const DATA_FILE = null;
+// Вариант для боковой панели Home Assistant: добавляет членов семьи, без кнопки «Где я».
+const PANEL = false;
 const map = L.map("map").setView([38.59, -121.38], 9);
 // Через add-on тайлы идут с его сервера; публичная копия грузит их напрямую с OSM, явно отправляя Referer.
 L.tileLayer(DATA_FILE ? "https://tile.openstreetmap.org/{z}/{x}/{y}.png" : "tiles/{z}/{x}/{y}.png", {
@@ -209,9 +216,46 @@ map.on("locationerror", () => {
   }
 });
 
-if (window.isSecureContext && navigator.geolocation) {
+if (!PANEL && window.isSecureContext && navigator.geolocation) {
   locateControl.addTo(map);
   startLocating();
+}
+
+// --- панель Home Assistant: члены семьи (person.*) из открытого Home Assistant ---
+// Страница вставлена в HA как панель «Веб-страница» и берёт людей из родительского окна HA.
+// Сама страница людей не хранит: открытая отдельно (без входа в HA) она их не покажет.
+function parentHass() {
+  try { return window.parent !== window && window.parent.document.querySelector("home-assistant").hass; }
+  catch (e) { return null; }
+}
+
+if (PANEL) {
+  map.createPane("people").style.zIndex = 660;  // люди поверх репортов
+  const peopleLayer = L.layerGroup().addTo(map);
+  const loadPeople = () => {
+    const hass = parentHass();
+    peopleLayer.clearLayers();
+    if (!hass) return;
+    for (const s of Object.values(hass.states)) {
+      if (!s.entity_id.startsWith("person.")) continue;
+      const lat = +s.attributes.latitude, lon = +s.attributes.longitude;
+      if (!isFinite(lat) || !isFinite(lon) || (!lat && !lon)) continue;
+      const name = s.attributes.friendly_name || s.entity_id;
+      const pic = s.attributes.entity_picture;
+      const initials = name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+      const face = pic ? `<img src="${pic}" alt="">` : `<span>${initials}</span>`;
+      const icon = L.divIcon({ className: "", html: `<div class="person">${face}</div>`,
+        iconSize: [34, 34], iconAnchor: [17, 17], popupAnchor: [0, -16] });
+      const box = el("div", "popup");
+      box.append(el("b", "", name));
+      if (s.state && s.state !== "not_home") box.append(el("div", "muted", s.state));
+      const ago = Math.round((Date.now() - new Date(s.last_updated)) / 60000);
+      box.append(el("div", "muted", ago < 1 ? "обновлено только что" : `обновлено ${ago} мин назад`));
+      peopleLayer.addLayer(L.marker([lat, lon], { icon, pane: "people", bubblingMouseEvents: false }).bindPopup(box));
+    }
+  };
+  loadPeople();
+  setInterval(loadPeople, 15000);
 }
 
 window.addEventListener("resize", () => map.invalidateSize());

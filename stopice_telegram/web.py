@@ -96,16 +96,16 @@ def is_prior(report):
     return "прошлый инцидент" in status or "prior incident" in status
 
 
-PUBLIC_LOADER = """<!doctype html>
+LOADER = """<!doctype html>
 <html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ICE Monitor — карта</title></head>
 <body style="margin:0;font:14px system-ui,sans-serif">
 <script>
-fetch("page.html?t=" + Date.now(), { cache: "no-store" })
-  .then(function (r) { if (!r.ok) throw new Error(r.status); return r.text(); })
-  .then(function (html) { document.open(); document.write(html); document.close(); })
-  .catch(function () { document.body.textContent = "Карта временно недоступна"; });
+fetch("{page}?t=" + Date.now(), {{ cache: "no-store" }})
+  .then(function (r) {{ if (!r.ok) throw new Error(r.status); return r.text(); }})
+  .then(function (html) {{ document.open(); document.write(html); document.close(); }})
+  .catch(function () {{ document.body.textContent = "Карта временно недоступна"; }});
 </script>
 </body></html>
 """
@@ -130,10 +130,14 @@ def publish_public(runtime, state, enabled, log):
     folder.mkdir(parents=True, exist_ok=True)
     page = VIEW.read_text(encoding="utf-8").replace("const DATA_FILE = null;", 'const DATA_FILE = "data.json";')
     (folder / "page.html").write_text(page, encoding="utf-8")
-    # Home Assistant отдаёт /local с кэшем на месяц, поэтому index.html — неизменный загрузчик,
-    # который всегда берёт свежую page.html; сама карта обновляется вместе с add-on'ом.
-    if not (folder / "index.html").exists() or (folder / "index.html").read_text(encoding="utf-8") != PUBLIC_LOADER:
-        (folder / "index.html").write_text(PUBLIC_LOADER, encoding="utf-8")
+    # та же карта для боковой панели Home Assistant: плюс члены семьи из открытого HA
+    (folder / "panel_page.html").write_text(page.replace("const PANEL = false;", "const PANEL = true;"), encoding="utf-8")
+    # Home Assistant отдаёт /local с кэшем на месяц, поэтому index.html и panel.html — неизменные
+    # загрузчики, которые всегда берут свежую страницу; сама карта обновляется вместе с add-on'ом.
+    for name, target in (("index.html", "page.html"), ("panel.html", "panel_page.html")):
+        loader = LOADER.format(page=target)
+        if not (folder / name).exists() or (folder / name).read_text(encoding="utf-8") != loader:
+            (folder / name).write_text(loader, encoding="utf-8")
     data = {"locations": runtime["cfg"]["locations"], "reports": today_reports(runtime),
             "generated": datetime.now(runtime.get("tz")).isoformat()}
     tmp = folder / "data.json.tmp"
@@ -142,6 +146,8 @@ def publish_public(runtime, state, enabled, log):
     if first or not runtime.get("public_logged"):
         runtime["public_logged"] = True
         log(f"Публичная карта: {public_url(runtime, state)}")
+        log(f"Панель для Home Assistant (Настройки → Панели → Добавить панель → Веб-страница): "
+            f"/local/stopice_{token}/panel.html")
     return first
 
 
