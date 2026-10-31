@@ -22,7 +22,7 @@ except Exception:
     PACIFIC = None
 LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.9.1"
+VERSION = "1.10.0"
 USER_AGENT = f"ICE-Monitor-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -699,6 +699,11 @@ def main():
         import web
         url = web.public_url(runtime, state)
         PUBLIC_MAP_URL = url if url and url.startswith("http") else None
+    ha_map = None
+    if cfg.get("ha_map", True) and os.environ.get("SUPERVISOR_TOKEN"):
+        from ha_map import HaMap
+        ha_map = HaMap(log)
+        log("Репорты и зоны на карте Home Assistant. Карточка для панели:\n" + HaMap.card_yaml(cfg["locations"]))
     announce_update(cfg, state)
     started = False
     while True:
@@ -717,6 +722,12 @@ def main():
             PUBLIC_MAP_URL = url if url and url.startswith("http") else None
         except Exception as e:
             log(f"Публичная карта: ошибка: {e}")
+        if ha_map:
+            try:
+                import web
+                ha_map.sync(web.today_reports(runtime), cfg["locations"])
+            except Exception as e:
+                log(f"Карта Home Assistant: ошибка: {e}")
         if not started:
             started = True
             log("Опрос работает — " + "; ".join(counts))
