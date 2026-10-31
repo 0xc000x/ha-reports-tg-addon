@@ -26,6 +26,15 @@
     box-shadow: 0 0 0 4px rgba(34, 197, 94, .35), 0 1px 4px rgba(0, 0, 0, .5);
   }
   .locate-btn { font-size: 18px; line-height: 30px !important; text-align: center; text-decoration: none; }
+  .place {
+    display: flex; align-items: center; gap: 4px; white-space: nowrap; pointer-events: none;
+    font: 600 12px/1 system-ui, sans-serif; color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .9);
+  }
+  .place span {
+    width: 26px; height: 26px; border-radius: 50%; background: #f59e0b; border: 2px solid #fff;
+    display: inline-flex; align-items: center; justify-content: center; font-size: 13px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, .5);
+  }
   .person {
     width: 30px; height: 30px; border-radius: 50%; border: 2px solid #22c55e; overflow: hidden; background: #334155;
     box-shadow: 0 1px 4px rgba(0, 0, 0, .5); color: #fff; font: 700 12px/30px system-ui, sans-serif; text-align: center;
@@ -256,6 +265,37 @@ if (PANEL) {
   };
   loadPeople();
   setInterval(loadPeople, 15000);
+
+  // свои места (дом, офис…) — зоны Home Assistant: Настройки → Области и зоны → Зоны
+  map.createPane("places").style.zIndex = 645;  // над зонами ICE Monitor, под репортами
+  const placeLayer = L.layerGroup().addTo(map);
+  let placesKey = "";
+  const loadPlaces = () => {
+    const hass = parentHass();
+    if (!hass) return;
+    const zones = Object.values(hass.states).filter((s) => s.entity_id.startsWith("zone.")
+      && !s.entity_id.startsWith("zone.ice_monitor_") && isFinite(+s.attributes.latitude));
+    const key = JSON.stringify(zones.map((s) => [s.entity_id, s.attributes.latitude, s.attributes.longitude,
+      s.attributes.radius, s.attributes.friendly_name]));
+    if (key === placesKey) return;  // перерисовываем, только если зоны поменялись
+    placesKey = key;
+    placeLayer.clearLayers();
+    for (const s of zones) {
+      const lat = +s.attributes.latitude, lon = +s.attributes.longitude;
+      const name = s.attributes.friendly_name || s.entity_id;
+      if (s.attributes.radius) {
+        placeLayer.addLayer(L.circle([lat, lon], { radius: +s.attributes.radius, pane: "places", interactive: false,
+          color: "#f59e0b", weight: 1.5, dashArray: "4 4", fillColor: "#f59e0b", fillOpacity: 0.08 }));
+      }
+      const icon = L.divIcon({ className: "", iconSize: null, iconAnchor: [14, 14],
+        html: `<div class="place"><span>${s.entity_id === "zone.home" ? "🏠" : "📍"}</span><b></b></div>` });
+      const marker = L.marker([lat, lon], { icon, pane: "places", interactive: false, keyboard: false });
+      marker.on("add", () => { marker.getElement().querySelector("b").textContent = name; });
+      placeLayer.addLayer(marker);
+    }
+  };
+  loadPlaces();
+  setInterval(loadPlaces, 60000);
 }
 
 window.addEventListener("resize", () => map.invalidateSize());
