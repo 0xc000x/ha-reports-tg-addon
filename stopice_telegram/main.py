@@ -22,7 +22,7 @@ except Exception:
     PACIFIC = None
 LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.9.0"
+VERSION = "1.9.1"
 USER_AGENT = f"ICE-Monitor-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -33,6 +33,7 @@ ANTIFREEZE_URL = "https://antifreeze.app/api/sightings"
 DEFAULT_TG_CHANNELS = ["icetracking"]
 WEB_PORT = 8099  # Ingress: карта точек в интерфейсе Home Assistant
 CHANGELOG_FILE = HERE / "CHANGELOG.md"
+PUBLIC_MAP_URL = None  # ссылка на публичную карту, когда она включена и адрес известен
 MAX_RECENT = 300  # сколько последних репортов показывать на карте
 RECENT_FILE = STATE_FILE.with_name("recent.json")  # они же на диске, чтобы карта не пустела после перезапуска
 RECENT_KEEP_SECONDS = 36 * 3600
@@ -245,6 +246,7 @@ def normalize_antifreeze(s, notes):
 # --- публичные Telegram-каналы (веб-версия t.me/s/<канал>) ---------------------
 
 TG_STATUSES = {
+    "prior incident reporting for record": "⚪ ПРОШЛЫЙ ИНЦИДЕНТ",
     "verified report": "🔴 ПОДТВЕРЖДЕНО",
     "urgent confirmed ice report": "🚨 СРОЧНО: ПОДТВЕРЖДЕНО",
     "unconfirmed report": "🟡 НЕ ПОДТВЕРЖДЕНО",
@@ -308,6 +310,8 @@ def parse_telegram_report(text):
     if comments.strip().lower() not in NO_COMMENTS:
         description += f"\n\nКомментарии: {comments}"
     status = TG_STATUSES.get(kind.lower(), f"{'🚨' if 'urgent' in kind.lower() else '📢'} {kind.upper()}")
+    if "prior incident" in kind.lower():
+        status = "⚪ ПРОШЛЫЙ ИНЦИДЕНТ"
     if kind.lower() == "confirmed by a community partner":
         # «Confirmed post by NorCal Resist» в описании -> «CONFIRMED BY NorCal Resist» в заголовке
         org = CONFIRMED_BY.search(description)
@@ -353,8 +357,11 @@ def format_alert(alert, loc=None):
     if alert.get("url"):
         links.append(f'<a href="{esc(alert["url"])}">Репорт</a>')
     if alert.get("lat") and alert.get("long"):
-        links.append(f'<a href="https://maps.google.com/?q={esc(alert["lat"])},{esc(alert["long"])}">Карта</a>')
-    links.append(f"<i>{esc(alert['source'])}</i>")
+        links.append(f'<a href="https://maps.google.com/?q={esc(alert["lat"])},{esc(alert["long"])}">Локация</a>')
+    if PUBLIC_MAP_URL:
+        links.append(f'<a href="{esc(PUBLIC_MAP_URL)}">Общая карта</a>')
+    else:
+        links.append(f"<i>{esc(alert['source'])}</i>")
     lines += ["", " · ".join(links)]
     return "\n".join(lines)
 
@@ -644,6 +651,7 @@ def announce_update(cfg, state):
 
 
 def main():
+    global PUBLIC_MAP_URL
     cfg = load_config()
     missing = [k for k in ("stopice_api_key", "telegram_bot_token", "telegram_chat_id", "locations")
                if not cfg.get(k)]
@@ -686,6 +694,11 @@ def main():
         except Exception as e:
             log(f"Карта точек не запустилась: {e}")
 
+    if cfg.get("public_page") and state.get("public_token"):
+        # ссылка «Общая карта» нужна уже в первых сообщениях, до первой публикации
+        import web
+        url = web.public_url(runtime, state)
+        PUBLIC_MAP_URL = url if url and url.startswith("http") else None
     announce_update(cfg, state)
     started = False
     while True:
@@ -700,6 +713,8 @@ def main():
             import web
             if web.publish_public(runtime, state, bool(cfg.get("public_page")), log):
                 save_state(state)
+            url = web.public_url(runtime, state) if cfg.get("public_page") else None
+            PUBLIC_MAP_URL = url if url and url.startswith("http") else None
         except Exception as e:
             log(f"Публичная карта: ошибка: {e}")
         if not started:

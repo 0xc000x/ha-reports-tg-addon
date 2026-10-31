@@ -85,7 +85,15 @@ def today_reports(runtime):
     tz = runtime.get("tz")
     start = datetime.combine(datetime.now(tz).date(), dtime.min, tzinfo=tz).timestamp()
     end = start + 24 * 3600
-    return [r for r in runtime["recent"].values() if r.get("ts") and start <= r["ts"] < end]
+    return [r for r in runtime["recent"].values()
+            if r.get("ts") and start <= r["ts"] < end and not is_prior(r)]
+
+
+def is_prior(report):
+    """Репорт о прошлом инциденте (stopice «PRIOR INCIDENT», канал «Prior incident reporting for record»):
+    на карте сегодняшних репортов ему не место."""
+    status = str(report.get("status") or "").lower()
+    return "прошлый инцидент" in status or "prior incident" in status
 
 
 PUBLIC_LOADER = """<!doctype html>
