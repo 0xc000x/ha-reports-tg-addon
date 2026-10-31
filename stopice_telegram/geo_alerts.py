@@ -7,6 +7,7 @@
 import json
 import math
 import os
+import re
 import time
 import urllib.request
 
@@ -76,14 +77,42 @@ def person_location(entity_id):
         return None
 
 
+DEVICES_TEMPLATE = (
+    "{% for d in integration_entities('mobile_app') | map('device_id') | select | unique %}"
+    "{{ device_attr(d, 'name') }}|{{ device_attr(d, 'manufacturer') }};{% endfor %}")
+
+
+def _slugify(text):
+    """Как Home Assistant называет службу notify.mobile_app_<имя устройства>."""
+    text = re.sub(r"['’`]", "", str(text).lower())
+    return re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+
+
+def detect_platforms():
+    """{служба notify: "ios" | "android"} по производителю телефона в Home Assistant."""
+    req = urllib.request.Request(
+        API + "/template", method="POST", data=json.dumps({"template": DEVICES_TEMPLATE}).encode(),
+        headers={"Authorization": f"Bearer {os.environ.get('SUPERVISOR_TOKEN')}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        text = resp.read().decode("utf-8", "replace")
+    platforms = {}
+    for line in text.split(";"):
+        name, _, manufacturer = line.partition("|")
+        if name.strip():
+            platforms["mobile_app_" + _slugify(name)] = "ios" if "apple" in manufacturer.lower() else "android"
+    return platforms
+
+
 def notify(service, title, message, data):
     service = service.split(".", 1)[1] if service.startswith("notify.") else service
     _request("POST", f"/services/notify/{service}", {"title": title, "message": message, "data": data})
 
 
 class GeoAlerts:
-    def __init__(self, log):
+    def __init__(self, log, spoken_text=None):
         self.log = log
+        self.spoken_text = spoken_text or SPOKEN_TEXT
+        self.platforms = None
 
     def check(self, people, reports, state, is_relevant, map_url=None):
         """people — [{person, notify}], reports — свежие репорты из всех источников."""
@@ -91,6 +120,12 @@ class GeoAlerts:
             return
         now = time.time()
         alerted_all = state.setdefault("geo_alerted", {})
+        if self.platforms is None:
+            try:
+                self.platforms = detect_platforms()
+            except Exception as e:
+                self.log(f"Уведомления: не удалось определить, где iPhone, а где Android: {e}")
+                self.platforms = {}
         for p in people:
             entity_id, service = p.get("person"), p.get("notify")
             if not entity_id or not service:
@@ -150,11 +185,13 @@ class GeoAlerts:
                 except Exception as e:
                     self.log(f"Уведомления: не удалось отправить {service}: {e}")
                     continue
-                if radius <= SPOKEN_LEVEL:
+                bare = service.split(".", 1)[1] if service.startswith("notify.") else service
+                platform = p.get("platform") or self.platforms.get(bare, "android")
+                if radius <= SPOKEN_LEVEL and platform == "android":  # на iPhone голоса нет, там критический пуш
                     # обычное уведомление на Samsung и др. не всегда пробивает беззвучный режим,
                     # а голос через поток будильника — пробивает (если будильники разрешены в «Не беспокоить»)
                     try:
-                        notify(service, "", "TTS", {"tts_text": SPOKEN_TEXT, "media_stream": "alarm_stream_max",
+                        notify(service, "", "TTS", {"tts_text": self.spoken_text, "media_stream": "alarm_stream_max",
                                                     "ttl": 0, "priority": "high"})
                     except Exception as e:
                         self.log(f"Уведомления: голосовая тревога на {service} не отправилась: {e}")

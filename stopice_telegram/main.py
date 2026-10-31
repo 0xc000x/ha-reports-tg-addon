@@ -22,7 +22,7 @@ except Exception:
     PACIFIC = None
 LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.12.3"
+VERSION = "1.12.4"
 USER_AGENT = f"ICE-Monitor-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -737,7 +737,7 @@ def main():
     geo = None
     if cfg.get("geo_alerts") and os.environ.get("SUPERVISOR_TOKEN"):
         from geo_alerts import GeoAlerts
-        geo = GeoAlerts(log)
+        geo = GeoAlerts(log, cfg.get("alarm_tts_text"))
         log("Уведомления по геопозиции: " + ", ".join(
             f"{p.get('person')} → {p.get('notify')}" for p in cfg["geo_alerts"]))
     announce_update(cfg, state)
