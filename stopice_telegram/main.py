@@ -22,7 +22,7 @@ except Exception:
     PACIFIC = None
 LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.12.0"
+VERSION = "1.12.1"
 USER_AGENT = f"ICE-Monitor-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -659,15 +659,15 @@ def check_geo_alerts(cfg, state, geo, pool):
     import geo_alerts
     import web
     people = [p for p in cfg.get("geo_alerts") or [] if p.get("person") and p.get("notify")]
-    for p in people:
+    for entity_id in dict.fromkeys(p["person"] for p in people):  # stopice — один раз на человека
         try:
-            where = geo_alerts.person_location(p["person"])
+            where = geo_alerts.person_location(entity_id)
             if where:
                 time.sleep(REQUEST_GAP)
                 pool.extend(fetch_stopice(cfg, {"name": where[2], "latitude": where[0], "longitude": where[1],
                                                 "distance_miles": geo_alerts.RADIUS_MILES}))
         except Exception as e:
-            log(f"Уведомления: stopice вокруг {p['person']}: ошибка: {e}")
+            log(f"Уведомления: stopice вокруг {entity_id}: ошибка: {e}")
     start = datetime.combine(datetime.now(LOCAL_TZ).date(), datetime.min.time(), tzinfo=LOCAL_TZ).timestamp()
 
     def relevant(r):  # только сегодняшние и без «прошлых инцидентов» — как на карте

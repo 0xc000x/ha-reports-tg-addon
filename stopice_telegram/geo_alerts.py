@@ -101,7 +101,8 @@ class GeoAlerts:
             if not where:
                 continue
             lat, lon, name = where
-            alerted = [a for a in alerted_all.get(entity_id, []) if now - a["ts"] < KEEP_SECONDS]
+            key = f"{entity_id}|{service}"  # у одного человека может быть несколько телефонов
+            alerted = [a for a in alerted_all.get(key, []) if now - a["ts"] < KEEP_SECONDS]
 
             candidates = []
             for r in reports:
@@ -147,4 +148,4 @@ class GeoAlerts:
                 alerted = [a for a in alerted if a not in same]
                 alerted.append({"lat": rlat, "lon": rlon, "ts": rts, "level": radius})
                 self.log(f"Уведомление {name}: {title} — {r.get('address')} ({miles:.1f} mi)")
-            alerted_all[entity_id] = alerted[-300:]
+            alerted_all[key] = alerted[-300:]
