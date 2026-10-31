@@ -174,7 +174,8 @@ class GeoAlerts:
                         "channel": "ICE Monitor", "importance": "high", "actions": actions,
                         "clickAction": map_url or f"https://maps.google.com/?q={rlat},{rlon}",
                         "push": {"interruption-level": "time-sensitive"}}
-                if radius == 1:
+                loud = p.get("critical", True) is not False  # можно отключить для конкретного телефона
+                if radius == 1 and loud:
                     # iPhone: критическое уведомление со звуком на полной громкости (звучит и в беззвучном режиме,
                     # если в приложении Home Assistant разрешены «Критические уведомления»)
                     data["push"] = {"interruption-level": "critical",
@@ -186,7 +187,7 @@ class GeoAlerts:
                     continue
                 bare = service.split(".", 1)[1] if service.startswith("notify.") else service
                 platform = p.get("platform") or self.platforms.get(bare, "android")
-                if radius <= SPOKEN_LEVEL and platform == "android":  # на iPhone голоса нет, там критический пуш
+                if loud and radius <= SPOKEN_LEVEL and platform == "android":  # на iPhone голоса нет, там критический пуш
                     # обычное уведомление на Samsung и др. не всегда пробивает беззвучный режим,
                     # а голос через поток будильника — пробивает (если будильники разрешены в «Не беспокоить»)
                     try:
