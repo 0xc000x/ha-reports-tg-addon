@@ -22,7 +22,7 @@ except Exception:
     PACIFIC = None
 LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.11.1"
+VERSION = "1.12.0"
 USER_AGENT = f"ICE-Monitor-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -546,7 +546,8 @@ def remember(recent, alerts):
         recent.popitem(last=False)
 
 
-def poll_once(cfg, state, locations, recent):
+def poll_once(cfg, state, locations, recent, pool=None):
+    pool = [] if pool is None else pool  # все полученные репорты — для уведомлений по геопозиции
     counts = []
     for n, loc in enumerate(locations):
         if n:
@@ -554,6 +555,7 @@ def poll_once(cfg, state, locations, recent):
         name = loc.get("name") or "Точка"
         try:
             alerts = fetch_stopice(cfg, loc)
+            pool.extend(alerts)
             counts.append(f"{name}: {len(alerts)}")
             remember(recent, reversed(alerts))
             process(cfg, state, loc, alerts, "locations")
@@ -564,6 +566,7 @@ def poll_once(cfg, state, locations, recent):
     if cfg.get("antifreeze_enabled"):
         try:
             sightings = fetch_antifreeze()
+            pool.extend(sightings)
             matched = 0
             for loc in locations:
                 near = [s for s in sightings
@@ -580,6 +583,7 @@ def poll_once(cfg, state, locations, recent):
     for channel in (DEFAULT_TG_CHANNELS if channels is None else channels):
         try:
             reports = fetch_telegram_channel(channel)
+            pool.extend(reports)
             matched = 0
             for loc in locations:
                 near = [r for r in reports
@@ -650,6 +654,32 @@ def announce_update(cfg, state):
     save_state(state)
 
 
+def check_geo_alerts(cfg, state, geo, pool):
+    """Уведомления по геопозиции: к репортам из зон добавляем stopice вокруг каждого человека."""
+    import geo_alerts
+    import web
+    people = [p for p in cfg.get("geo_alerts") or [] if p.get("person") and p.get("notify")]
+    for p in people:
+        try:
+            where = geo_alerts.person_location(p["person"])
+            if where:
+                time.sleep(REQUEST_GAP)
+                pool.extend(fetch_stopice(cfg, {"name": where[2], "latitude": where[0], "longitude": where[1],
+                                                "distance_miles": geo_alerts.RADIUS_MILES}))
+        except Exception as e:
+            log(f"Уведомления: stopice вокруг {p['person']}: ошибка: {e}")
+    start = datetime.combine(datetime.now(LOCAL_TZ).date(), datetime.min.time(), tzinfo=LOCAL_TZ).timestamp()
+
+    def relevant(r):  # только сегодняшние и без «прошлых инцидентов» — как на карте
+        return (r.get("ts") or 0) >= start and not web.is_prior(r)
+
+    try:
+        geo.check(people, pool, state, relevant, PUBLIC_MAP_URL)
+        save_state(state)
+    except Exception as e:
+        log(f"Уведомления: ошибка: {e}")
+
+
 def main():
     global PUBLIC_MAP_URL
     cfg = load_config()
@@ -704,12 +734,21 @@ def main():
         ha_map.cleanup(log)  # метки и зоны, которые версии 1.10.x выводили на карточку карты HA
     except Exception as e:
         log(f"Не удалось убрать старые метки с карты Home Assistant: {e}")
+    geo = None
+    if cfg.get("geo_alerts") and os.environ.get("SUPERVISOR_TOKEN"):
+        from geo_alerts import GeoAlerts
+        geo = GeoAlerts(log)
+        log("Уведомления по геопозиции: " + ", ".join(
+            f"{p.get('person')} → {p.get('notify')}" for p in cfg["geo_alerts"]))
     announce_update(cfg, state)
     started = False
     while True:
         cycle_start = time.monotonic()
         locations = cfg["locations"]  # могли поменяться через карту
-        counts = poll_once(cfg, state, locations, runtime["recent"])
+        pool = []
+        counts = poll_once(cfg, state, locations, runtime["recent"], pool)
+        if geo:
+            check_geo_alerts(cfg, state, geo, pool)
         try:
             save_recent(runtime["recent"])
         except OSError as e:
