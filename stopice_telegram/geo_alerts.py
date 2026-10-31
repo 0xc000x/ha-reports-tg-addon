@@ -14,7 +14,7 @@ import urllib.request
 API = "http://supervisor/core/api"
 RADIUS_MILES = 15
 SPOKEN_LEVEL = 1  # на этом уровне телефон ещё и проговаривает тревогу через громкость будильника
-SPOKEN_TEXT = "Внимание! Шакалы в радиусе одной мили"
+SPOKEN_TEXT = "1 mile"  # коротко, чтобы не говорило долго
 LEVELS = [  # (миль, заголовок)
     (1, "ПИЗДЕЦ! Шакалы в радиусе 1 мили"),
     (3, "ОСТОРОЖНО! Шакалы в радиусе 3 миль"),
@@ -175,7 +175,6 @@ class GeoAlerts:
                         "clickAction": map_url or f"https://maps.google.com/?q={rlat},{rlon}",
                         "push": {"interruption-level": "time-sensitive"}}
                 if radius == 1:
-                    data["channel"] = "alarm_stream"  # Android: звучит как будильник, даже в беззвучном режиме
                     # iPhone: критическое уведомление со звуком на полной громкости (звучит и в беззвучном режиме,
                     # если в приложении Home Assistant разрешены «Критические уведомления»)
                     data["push"] = {"interruption-level": "critical",
