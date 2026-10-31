@@ -141,7 +141,10 @@ class GeoAlerts:
                         "push": {"interruption-level": "time-sensitive"}}
                 if radius == 1:
                     data["channel"] = "alarm_stream"  # Android: звучит как будильник, даже в беззвучном режиме
-                    data["push"] = {"interruption-level": "critical"}
+                    # iPhone: критическое уведомление со звуком на полной громкости (звучит и в беззвучном режиме,
+                    # если в приложении Home Assistant разрешены «Критические уведомления»)
+                    data["push"] = {"interruption-level": "critical",
+                                    "sound": {"name": "default", "critical": 1, "volume": 1.0}}
                 try:
                     notify(service, title, message, data)
                 except Exception as e:
