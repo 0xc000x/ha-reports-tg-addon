@@ -22,7 +22,7 @@ except Exception:
     PACIFIC = None
 LOCAL_TZ = PACIFIC or timezone(timedelta(hours=-8))  # время репортов stopice — тихоокеанское
 
-VERSION = "1.12.7"
+VERSION = "1.13.0"
 USER_AGENT = f"ICE-Monitor-HomeAssistant-Addon/{VERSION}"
 HERE = Path(__file__).resolve().parent
 OPTIONS_FILE = Path("/data/options.json")  # настройки add-on'а Home Assistant
@@ -375,19 +375,33 @@ def telegram(cfg, method, **params):
 
 
 def destination(cfg):
-    """Чат и, если задан, топик группы, куда идут все сообщения бота."""
+    """Основной чат и, если задан, топик группы: сюда идут все сообщения бота."""
     params = {"chat_id": cfg["telegram_chat_id"]}
     if cfg.get("telegram_topic_id"):
         params["message_thread_id"] = int(cfg["telegram_topic_id"])
     return params
 
 
-def send_text(cfg, text):
-    telegram(cfg, "sendMessage", **destination(cfg), text=text[:4096],
+def extra_destinations(cfg):
+    """Дополнительные получатели репортов из опции extra_telegram_chats."""
+    result = []
+    for chat in cfg.get("extra_telegram_chats") or []:
+        chat_id = str(chat.get("chat_id") or "").strip()
+        if not chat_id:
+            continue
+        params = {"chat_id": chat_id}
+        if chat.get("topic_id"):
+            params["message_thread_id"] = int(chat["topic_id"])
+        result.append(params)
+    return result
+
+
+def send_text(cfg, text, dest=None):
+    telegram(cfg, "sendMessage", **(dest or destination(cfg)), text=text[:4096],
              parse_mode="HTML", disable_web_page_preview="true")
 
 
-def upload_photo(cfg, photo_url, caption):
+def upload_photo(cfg, photo_url, caption, dest=None):
     """Скачивает фото и загружает его файлом: по ссылке Telegram не всегда может забрать картинку сам."""
     req = urllib.request.Request(photo_url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -395,7 +409,7 @@ def upload_photo(cfg, photo_url, caption):
     if len(image) > 10 * 1024 * 1024:
         raise RuntimeError("фото больше 10 МБ")
     boundary = uuid.uuid4().hex
-    fields = {**destination(cfg), "caption": caption, "parse_mode": "HTML"}
+    fields = {**(dest or destination(cfg)), "caption": caption, "parse_mode": "HTML"}
     body = b"".join(
         f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
         for k, v in fields.items())
@@ -412,22 +426,31 @@ def upload_photo(cfg, photo_url, caption):
         raise RuntimeError(f"Telegram sendPhoto: {e.code} {e.read().decode('utf-8', 'replace')}") from None
 
 
-def send_alert(cfg, alert, loc=None):
-    text = format_alert(alert, loc)
-    photo = alert.get("photo")
+def send_alert_to(cfg, text, photo, dest):
     if photo and len(text) <= 1024:
         try:
-            telegram(cfg, "sendPhoto", **destination(cfg), photo=photo,
-                     caption=text, parse_mode="HTML")
+            telegram(cfg, "sendPhoto", **dest, photo=photo, caption=text, parse_mode="HTML")
             return
         except Exception:
             pass
         try:
-            upload_photo(cfg, photo, text)
+            upload_photo(cfg, photo, text, dest)
             return
         except Exception as e:
             log(f"Фото не отправилось ({e}), шлю текстом")
-    send_text(cfg, text)
+    send_text(cfg, text, dest)
+
+
+def send_alert(cfg, alert, loc=None):
+    """Репорт в основной чат (ошибка — повтор в следующем цикле) и всем дополнительным получателям."""
+    text = format_alert(alert, loc)
+    photo = alert.get("photo")
+    send_alert_to(cfg, text, photo, destination(cfg))
+    for dest in extra_destinations(cfg):
+        try:
+            send_alert_to(cfg, text, photo, dest)
+        except Exception as e:  # один недоступный получатель не мешает остальным
+            log(f"Не удалось отправить репорт в чат {dest['chat_id']}: {e}")
 
 
 # --- состояние и цикл ----------------------------------------------------------
